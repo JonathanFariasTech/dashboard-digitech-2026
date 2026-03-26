@@ -4,75 +4,96 @@ import plotly.express as px
 import os
 
 # ==========================================
-# 1. CONFIGURAÇÃO E CRIAÇÃO DO COFRE DE DADOS
+# 1. CONFIGURAÇÃO E CONSTANTES DO SISTEMA
 # ==========================================
 st.set_page_config(page_title="Dashboard Digitech", layout="wide", page_icon="📊")
 
 PASTA_HISTORICO = "historico_dados"
 os.makedirs(PASTA_HISTORICO, exist_ok=True)
 
-# Dicionário para padronizar os nomes dos meses em português
+# Padrão de meses para nomenclatura automática
 MESES_PT = {1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun', 
             7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'}
 
+# Regra de Ouro: O padrão exato que a planilha deve ter para ser aceita
+ABAS_OBRIGATORIAS = [
+    "TURMAS", "OCUPAÇÃO", "NÃO_REGÊNCIA", "INSTRUTORES", 
+    "DISCIPLINAS", "AMBIENTES", "FALTAS", "PARÂMETROS"
+]
+
 # ==========================================
-# 2. FUNÇÃO DE DETECÇÃO AUTOMÁTICA DE MÊS
+# 2. FUNÇÕES DE VALIDAÇÃO E AUTOMAÇÃO
 # ==========================================
+def validar_planilha(file):
+    """Lê as abas do arquivo e verifica se estão de acordo com o padrão exigido."""
+    try:
+        xls = pd.ExcelFile(file)
+        abas_arquivo = xls.sheet_names
+        
+        # Verifica quais abas obrigatórias estão faltando
+        abas_faltantes = [aba for aba in ABAS_OBRIGATORIAS if aba not in abas_arquivo]
+        
+        if abas_faltantes:
+            return False, f"Planilha fora do padrão! Faltam as seguintes abas: {', '.join(abas_faltantes)}"
+        return True, "Planilha validada com sucesso."
+    except Exception as e:
+        return False, f"Erro ao ler o arquivo. Certifique-se de que é um Excel válido. Detalhe: {e}"
+
 def extrair_mes_automatico(file):
     """Lê a planilha na memória e detecta o mês baseado nos dados operacionais"""
     try:
-        # Lê apenas a coluna de DATA da aba de Ocupação para ser extremamente rápido
         df_temp = pd.read_excel(file, sheet_name="OCUPAÇÃO", usecols=["DATA"])
         datas = pd.to_datetime(df_temp["DATA"], errors="coerce").dropna()
-        
         if not datas.empty:
-            # Pega a data que mais aparece (moda) para definir qual é o mês da planilha
             data_predominante = datas.mode()[0]
             mes_num = data_predominante.month
             ano = data_predominante.year
-            
-            # Formata no padrão: "03 - Mar 2026" (Isso garante a ordem alfabética/numérica correta no histórico)
-            nome_padronizado = f"{mes_num:02d} - {MESES_PT[mes_num]} {ano}"
-            return nome_padronizado
-    except Exception as e:
+            return f"{mes_num:02d} - {MESES_PT[mes_num]} {ano}"
+    except Exception:
         return None
     return None
 
 # ==========================================
-# 3. MENU LATERAL: UPLOAD AUTOMATIZADO
+# 3. MENU LATERAL: UPLOAD BLINDADO
 # ==========================================
 st.sidebar.title("📥 Gestão de Dados")
 
 with st.sidebar.expander("➕ Adicionar / Atualizar Mês", expanded=False):
-    st.markdown("Arraste a planilha. O sistema detectará o mês automaticamente.")
+    st.markdown("Arraste a planilha. O sistema verificará o padrão e detectará o mês.")
     arquivo_carregado = st.file_uploader("Planilha (.xlsx)", type=["xlsx"])
     
     if arquivo_carregado:
-        # Detecta o nome do mês lendo os dados por dentro
-        nome_mes_auto = extrair_mes_automatico(arquivo_carregado)
+        # PASSO 1: O Escudo - Valida a planilha antes de qualquer coisa
+        valida, mensagem = validar_planilha(arquivo_carregado)
         
-        if nome_mes_auto:
-            st.success(f"📅 Mês detectado nos dados: **{nome_mes_auto}**")
-            
-            caminho_arquivo = os.path.join(PASTA_HISTORICO, f"{nome_mes_auto}.xlsx")
-            
-            if os.path.exists(caminho_arquivo):
-                st.warning("⚠️ Este mês já existe. Prosseguir irá **atualizar e sobrescrever** os dados.")
-                texto_botao = "🔄 Atualizar Histórico"
-            else:
-                texto_botao = "💾 Salvar Novo Mês"
-                
-            if st.button(texto_botao):
-                # Volta o ponteiro do arquivo para o início antes de salvar
-                arquivo_carregado.seek(0)
-                with open(caminho_arquivo, "wb") as f:
-                    f.write(arquivo_carregado.getbuffer())
-                
-                st.cache_data.clear()
-                st.toast(f"Dados de '{nome_mes_auto}' gravados com sucesso!", icon="✅")
-                st.rerun()
+        if not valida:
+            st.error("❌ " + mensagem)
+            st.stop() # Para a execução aqui, impedindo que o erro quebre o dashboard
         else:
-            st.error("❌ Não foi possível encontrar datas válidas na aba 'OCUPAÇÃO' para definir o mês. Verifique o padrão da planilha.")
+            # PASSO 2: A Inteligência - Se for válida, descobre de que mês é
+            nome_mes_auto = extrair_mes_automatico(arquivo_carregado)
+            
+            if nome_mes_auto:
+                st.success(f"✅ Validação OK! Mês detectado: **{nome_mes_auto}**")
+                caminho_arquivo = os.path.join(PASTA_HISTORICO, f"{nome_mes_auto}.xlsx")
+                
+                if os.path.exists(caminho_arquivo):
+                    st.warning("⚠️ Este mês já existe. Prosseguir irá **atualizar e sobrescrever** os dados.")
+                    texto_botao = "🔄 Atualizar Histórico"
+                else:
+                    texto_botao = "💾 Salvar Novo Mês"
+                    
+                if st.button(texto_botao):
+                    arquivo_carregado.seek(0)
+                    with open(caminho_arquivo, "wb") as f:
+                        f.write(arquivo_carregado.getbuffer())
+                    
+                    st.cache_data.clear()
+                    st.toast(f"Dados de '{nome_mes_auto}' gravados com sucesso!", icon="✅")
+                    st.rerun()
+            else:
+                st.error("❌ Planilha validada, mas não foi possível encontrar datas na aba 'OCUPAÇÃO'. Verifique o preenchimento dos dados.")
+                st.stop()
 
 # ==========================================
 # 4. VERIFICAÇÃO DE HISTÓRICO EXISTENTE
@@ -188,7 +209,7 @@ else:
         df_ocupacao_f = dados['ocupacao'].copy()
 
     if pagina_selecionada == "🌐 Visão 360º":
-        st.title(f"🌐 Visão Institucional - {mes_analise[5:]}") # Remove os números "03 - " do título para ficar mais limpo
+        st.title(f"🌐 Visão Institucional - {mes_analise[5:]}") 
         col1, col2, col3, col4, col5 = st.columns(5)
         
         col1.metric("Turmas Abertas", len(df_turmas_f))
