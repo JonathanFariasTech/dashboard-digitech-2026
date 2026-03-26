@@ -3,99 +3,137 @@ import pandas as pd
 import plotly.express as px
 
 # 1. Configuração da Página
-st.set_page_config(page_title="Dashboard de Desempenho Institucional", layout="wide")
-st.title("📊 Painel de Desempenho - Digitech 2026")
+st.set_page_config(page_title="Dashboard 360º - Digitech 2026", layout="wide")
+st.title("📊 Painel de Desempenho 360º - Digitech 2026")
 
-# 2. Carregamento e Tratamento dos Dados
+# 2. Carregamento de TODAS as abas
 @st.cache_data
 def load_data():
-    # Nome do arquivo Excel único
     arquivo_excel = "Consolidado - Status 2026.xlsx"
+    xls = pd.ExcelFile(arquivo_excel)
     
-    # Carregando cada aba (sheet) como um DataFrame diferente
-    df_turmas = pd.read_excel(arquivo_excel, sheet_name="TURMAS")
-    df_ocupacao = pd.read_excel(arquivo_excel, sheet_name="OCUPAÇÃO")
-    df_nao_regencia = pd.read_excel(arquivo_excel, sheet_name="NÃO_REGÊNCIA")
-    df_instrutores = pd.read_excel(arquivo_excel, sheet_name="INSTRUTORES")
+    # Lendo todas as abas estratégicas
+    df_turmas = pd.read_excel(xls, sheet_name="TURMAS")
+    df_ocupacao = pd.read_excel(xls, sheet_name="OCUPAÇÃO")
+    df_nao_regencia = pd.read_excel(xls, sheet_name="NÃO_REGÊNCIA")
+    df_instrutores = pd.read_excel(xls, sheet_name="INSTRUTORES")
+    df_disciplinas = pd.read_excel(xls, sheet_name="DISCIPLINAS", skiprows=1) # Tratando cabeçalho
+    df_ambientes = pd.read_excel(xls, sheet_name="AMBIENTES")
+    df_faltas = pd.read_excel(xls, sheet_name="FALTAS")
+    df_param = pd.read_excel(xls, sheet_name="PARÂMETROS", skiprows=9)
     
-    # A aba de parâmetros possui linhas em branco no topo, por isso usamos skiprows=9
-    df_parametros = pd.read_excel(arquivo_excel, sheet_name="PARÂMETROS", skiprows=9)
-    
-    return df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros
+    return df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_disciplinas, df_ambientes, df_faltas, df_param
 
 try:
-    df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros = load_data()
-except FileNotFoundError:
-    st.error("Arquivo Excel não encontrado. Verifique se o nome 'Consolidado - Status 2026.xlsx' está correto e na mesma pasta.")
-    st.stop()
-except ValueError as e:
-    st.error(f"Erro ao carregar as abas do Excel. Verifique se os nomes das abas estão exatos. Erro: {e}")
+    df_turmas, df_ocupacao, df_nr, df_inst, df_disc, df_amb, df_faltas, df_param = load_data()
+except Exception as e:
+    st.error(f"Erro ao carregar o arquivo: {e}")
     st.stop()
 
-# 3. Cálculo de Métricas (KPIs)
-turmas_ativas = df_turmas[df_turmas['STATUS'] == 'Em andamento'].shape[0]
-vagas_totais = df_turmas['VAGAS_TOTAL'].sum()
-vagas_ocupadas = df_turmas['VAGAS_OCUPADAS'].sum()
-taxa_preenchimento = (vagas_ocupadas / vagas_totais) * 100 if vagas_totais > 0 else 0
+# ==========================================
+# SEÇÃO 1: MÉTRICAS GERAIS (LENDO TUDO)
+# ==========================================
+st.markdown("### 🌐 Visão Institucional Completa")
 
-ocupacao_media = df_ocupacao['PERCENTUAL_OCUPACAO'].mean() * 100
-meta_ocupacao_ideal = df_parametros[df_parametros['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
+# Cálculos de todas as abas
+total_turmas = len(df_turmas)
+total_alunos_ativos = df_turmas['VAGAS_OCUPADAS'].sum()
+total_amb_fisicos = len(df_amb[df_amb['VIRTUAL'] == 'NÃO'])
+total_instrutores = len(df_inst)
+total_disciplinas = len(df_disc)
+horas_nao_regencia_total = df_nr['HORAS_NAO_REGENCIA'].sum()
+registros_faltas = len(df_faltas)
 
-total_instrutores_ativos = df_instrutores[df_instrutores['STATUS'] == 'ATIVO'].shape[0]
-
-# 4. Exibição dos KPIs Superiores
-st.markdown("### 🎯 Indicadores Chave de Desempenho (KPIs)")
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric("Turmas em Andamento", turmas_ativas)
-with col2:
-    st.metric("Taxa de Preenchimento (Vagas)", f"{taxa_preenchimento:.1f}%", f"{vagas_ocupadas} alunos")
-with col3:
-    st.metric("Ocupação Média Física", f"{ocupacao_media:.1f}%", f"Meta: {meta_ocupacao_ideal}%")
-with col4:
-    st.metric("Instrutores Ativos", total_instrutores_ativos)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+col1.metric("Turmas Abertas", total_turmas)
+col2.metric("Alunos Ocupando Vagas", total_alunos_ativos)
+col3.metric("Salas Físicas (Ambientes)", total_amb_fisicos)
+col4.metric("Corpo Docente", total_instrutores)
+col5.metric("Total de Disciplinas", total_disciplinas)
+col6.metric("Faltas Registradas", registros_faltas)
 
 st.divider()
 
-# 5. Gráficos de Desempenho
+# ==========================================
+# SEÇÃO 2: RH DOCENTE E OCUPAÇÃO
+# ==========================================
 colA, colB = st.columns(2)
 
 with colA:
-    st.markdown("#### Ocupação de Vagas por Turma")
-    df_turmas_melt = df_turmas.melt(id_vars=['NOME_TURMA'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
-                                    var_name='Tipo', value_name='Quantidade')
-    fig_vagas = px.bar(df_turmas_melt, x='NOME_TURMA', y='Quantidade', color='Tipo', barmode='group',
-                       labels={'NOME_TURMA': 'Turma', 'Quantidade': 'Nº de Vagas'},
-                       color_discrete_sequence=['#1f77b4', '#ff7f0e'])
-    fig_vagas.update_layout(xaxis_tickangle=-45)
-    st.plotly_chart(fig_vagas, use_container_width=True)
+    st.markdown("#### 👤 Instrutores Fora de Regência (Afastamentos)")
+    
+    # Filtra apenas os professores que TEM observação (Remove os vazios)
+    df_inst_afastados = df_inst.dropna(subset=['OBSERVAÇÃO']).copy()
+    
+    # Função para encurtar o nome e não quebrar o gráfico (Ex: "Raphael Barreto de Oliveira" -> "Raphael Oliveira")
+    def encurtar_nome(nome):
+        partes = str(nome).split()
+        if len(partes) > 1:
+            return f"{partes[0]} {partes[-1]}"
+        return nome
+        
+    df_inst_afastados['Nome Curto'] = df_inst_afastados['NOME_COMPLETO'].apply(encurtar_nome)
+    
+    if not df_inst_afastados.empty:
+        # Gráfico focado nas observações
+        fig_inst = px.bar(
+            df_inst_afastados, 
+            x="OBSERVAÇÃO", 
+            y="Nome Curto", 
+            color="OBSERVAÇÃO",
+            orientation='h',
+            labels={'Nome Curto': 'Instrutor', 'OBSERVAÇÃO': 'Motivo'}
+        )
+        # Ajustando altura para caber todo mundo sem esmagar
+        fig_inst.update_layout(height=450, showlegend=False)
+        st.plotly_chart(fig_inst, use_container_width=True)
+    else:
+        st.success("Excelente! Todos os instrutores estão sem observações de afastamento no momento.")
 
 with colB:
-    st.markdown("#### Ocupação Média por Ambiente")
-    df_amb_ocup = df_ocupacao.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
-    df_amb_ocup['PERCENTUAL_OCUPACAO'] *= 100
-    fig_ambientes = px.bar(df_amb_ocup, x='AMBIENTE', y='PERCENTUAL_OCUPACAO', 
-                           labels={'AMBIENTE': 'Ambiente', 'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)'},
-                           color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues')
-    fig_ambientes.add_hline(y=meta_ocupacao_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
-    st.plotly_chart(fig_ambientes, use_container_width=True)
+    st.markdown("#### 📊 Ocupação de Vagas nas Turmas")
+    # Encurtando o nome da turma para o gráfico ficar legível
+    df_turmas['Turma Curta'] = df_turmas['NOME_TURMA'].apply(lambda x: x[:25] + "..." if len(str(x)) > 25 else x)
+    
+    df_t_melt = df_turmas.melt(id_vars=['Turma Curta'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
+                               var_name='Tipo', value_name='Quantidade')
+    
+    fig_vagas = px.bar(df_t_melt, x='Turma Curta', y='Quantidade', color='Tipo', barmode='group',
+                       color_discrete_sequence=['#1f77b4', '#ff7f0e'])
+    
+    fig_vagas.update_layout(height=450, xaxis_title="", yaxis_title="Vagas")
+    st.plotly_chart(fig_vagas, use_container_width=True)
 
 st.divider()
 
-# 6. Desempenho e Alocação de Instrutores
+# ==========================================
+# SEÇÃO 3: PRODUTIVIDADE E AMBIENTES
+# ==========================================
 colC, colD = st.columns(2)
 
 with colC:
-    st.markdown("#### Distribuição de Atividades: Não Regência")
-    df_nr_agrupado = df_nao_regencia.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
-    fig_nr = px.pie(df_nr_agrupado, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4)
-    st.plotly_chart(fig_nr, use_container_width=True)
+    st.markdown("#### 📚 Status Geral das Disciplinas")
+    status_disc = df_disc['STATUS'].value_counts().reset_index()
+    status_disc.columns = ['Status', 'Quantidade']
+    
+    fig_disc = px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, 
+                      color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig_disc.update_layout(height=400)
+    st.plotly_chart(fig_disc, use_container_width=True)
 
 with colD:
-    st.markdown("#### Status dos Instrutores")
-    status_counts = df_instrutores['OBSERVAÇÃO'].fillna('SEM OBSERVAÇÃO').value_counts().reset_index()
-    status_counts.columns = ['Status/Observação', 'Quantidade']
-    fig_status = px.bar(status_counts, y='Status/Observação', x='Quantidade', orientation='h',
-                        color='Status/Observação')
-    st.plotly_chart(fig_status, use_container_width=True)
+    st.markdown("#### 🏢 Eficiência no Uso de Salas")
+    df_amb_uso = df_ocupacao.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
+    df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
+    df_amb_uso = df_amb_uso.sort_values('PERCENTUAL_OCUPACAO', ascending=True) # Ordena do menor pro maior uso
+    
+    fig_amb = px.bar(df_amb_uso, x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', 
+                     color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues',
+                     labels={'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)', 'AMBIENTE': ''})
+                     
+    # Pegando a meta da aba de parâmetros
+    meta_ideal = df_param[df_param['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
+    fig_amb.add_vline(x=meta_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
+    
+    fig_amb.update_layout(height=400)
+    st.plotly_chart(fig_amb, use_container_width=True)
