@@ -52,7 +52,6 @@ turno_selecionado = st.sidebar.selectbox("Filtrar por Turno:", lista_turnos)
 # Aplicar o filtro nos DataFrames que possuem a coluna TURNO
 if turno_selecionado != "Todos":
     df_turmas_filtrado = df_turmas[df_turmas['TURNO'] == turno_selecionado]
-    # Na aba ocupação, o turno também costuma estar presente para análise de salas
     if 'TURNO' in df_ocupacao.columns:
         df_ocupacao_filtrado = df_ocupacao[df_ocupacao['TURNO'] == turno_selecionado]
     else:
@@ -95,7 +94,6 @@ if pagina_selecionada == "🌐 Visão 360º":
     
     st.divider()
     
-    # Gráfico Rápido de Status das Disciplinas na Visão Geral
     st.markdown("#### Status de Execução das Disciplinas")
     status_disc = df_disc['STATUS'].value_counts().reset_index()
     status_disc.columns = ['Status', 'Quantidade']
@@ -111,8 +109,7 @@ if pagina_selecionada == "🌐 Visão 360º":
 elif pagina_selecionada == "👥 Análise de Docentes (RH)":
     st.title("👥 Desempenho e Alocação de Instrutores")
     
-    # Criando Abas para organizar o conteúdo
-    aba1, aba2 = st.tabs(["📌 Afastamentos e Status", "⏳ Horas de Não Regência"])
+    aba1, aba2 = st.tabs(["📌 Afastamentos e Status", "⏳ Detalhamento de Não Regência"])
     
     with aba1:
         st.markdown("#### Profissionais com Observações (Férias/Afastamentos)")
@@ -131,21 +128,59 @@ elif pagina_selecionada == "👥 Análise de Docentes (RH)":
             fig_inst.update_layout(height=400, showlegend=False)
             st.plotly_chart(fig_inst, use_container_width=True)
             
-            # Tabela detalhada abaixo do gráfico
-            with st.expander("Ver lista detalhada de docentes"):
+            with st.expander("Ver lista detalhada de docentes afastados"):
                 st.dataframe(df_inst_afastados[['NOME_COMPLETO', 'EMAIL', 'OBSERVAÇÃO']], use_container_width=True)
         else:
             st.success("Todos os instrutores estão ativos e sem observações de afastamento neste momento.")
 
     with aba2:
-        st.markdown("#### Distribuição de Atividades: Não Regência")
+        st.markdown("#### Análise de Atividades Extra-Classe (Não Regência)")
         if not df_nr.empty:
-            df_nr_agrupado = df_nr.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
-            fig_nr = px.pie(df_nr_agrupado, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4)
-            fig_nr.update_layout(height=450)
-            st.plotly_chart(fig_nr, use_container_width=True)
+            
+            # 1. Cruzando os dados da aba Não Regência (ID) com a aba Instrutores (Nomes)
+            df_nr_detalhado = pd.merge(df_nr, df_inst[['ID', 'NOME_COMPLETO']], left_on='ID_INSTRUTOR', right_on='ID', how='left')
+            df_nr_detalhado['Nome Curto'] = df_nr_detalhado['NOME_COMPLETO'].apply(encurtar_nome)
+            
+            # Criando duas colunas para os gráficos
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                # Gráfico de Pizza: Tipos de Atividade
+                df_tipo = df_nr_detalhado.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
+                fig_tipo = px.pie(df_tipo, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4, 
+                                  title="Horas por Tipo de Atividade")
+                fig_tipo.update_layout(height=400)
+                st.plotly_chart(fig_tipo, use_container_width=True)
+                
+            with col_g2:
+                # Gráfico de Barras: Horas por Instrutor
+                df_horas_inst = df_nr_detalhado.groupby('Nome Curto')['HORAS_NAO_REGENCIA'].sum().reset_index()
+                df_horas_inst = df_horas_inst.sort_values('HORAS_NAO_REGENCIA', ascending=True)
+                fig_inst_nr = px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='Nome Curto', orientation='h',
+                                     title="Ranking de Horas por Instrutor",
+                                     labels={'HORAS_NAO_REGENCIA': 'Total de Horas', 'Nome Curto': ''},
+                                     color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges')
+                fig_inst_nr.update_layout(height=400)
+                st.plotly_chart(fig_inst_nr, use_container_width=True)
+            
+            st.divider()
+            
+            # 2. Tabela Interativa de Detalhamento
+            st.markdown("#### 📋 Histórico Detalhado (Registro a Registro)")
+            st.caption("Explore a tabela abaixo para ver o motivo exato de cada alocação. Você pode clicar nos cabeçalhos para ordenar.")
+            
+            # Preparando a tabela para exibição (selecionando e renomeando colunas)
+            df_tabela = df_nr_detalhado[['DATA', 'NOME_COMPLETO', 'TIPO_ATIVIDADE', 'HORAS_NAO_REGENCIA', 'DESCRICAO', 'COMPROVANTE']].copy()
+            df_tabela.columns = ['Data', 'Instrutor', 'Atividade', 'Horas', 'Descrição Detalhada', 'Status Comprovante']
+            
+            # Formatando a data para o padrão brasileiro
+            df_tabela['Data'] = pd.to_datetime(df_tabela['Data']).dt.strftime('%d/%m/%Y')
+            
+            # Exibindo a tabela usando a funcionalidade nativa e interativa do Streamlit
+            st.dataframe(df_tabela, use_container_width=True, hide_index=True)
+            
         else:
-            st.info("Não há dados de Não Regência registados.")
+            st.info("Não há dados de Não Regência registados na planilha.")
 
 
 # ------------------------------------------
@@ -185,12 +220,11 @@ elif pagina_selecionada == "🏢 Ocupação e Ambientes":
                              color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues',
                              labels={'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)', 'AMBIENTE': 'Sala / Laboratório'})
                              
-            # Adicionar linha de meta
             try:
                 meta_ideal = df_param[df_param['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
                 fig_amb.add_vline(x=meta_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
             except:
-                pass # Caso o parâmetro não seja encontrado
+                pass
             
             fig_amb.update_layout(height=600)
             st.plotly_chart(fig_amb, use_container_width=True)
