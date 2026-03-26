@@ -11,11 +11,9 @@ st.set_page_config(page_title="Dashboard Digitech", layout="wide", page_icon="�
 PASTA_HISTORICO = "historico_dados"
 os.makedirs(PASTA_HISTORICO, exist_ok=True)
 
-# Padrão de meses para nomenclatura automática
 MESES_PT = {1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun', 
             7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'}
 
-# Regra de Ouro: O padrão exato que a planilha deve ter para ser aceita
 ABAS_OBRIGATORIAS = [
     "TURMAS", "OCUPAÇÃO", "NÃO_REGÊNCIA", "INSTRUTORES", 
     "DISCIPLINAS", "AMBIENTES", "FALTAS", "PARÂMETROS"
@@ -25,14 +23,10 @@ ABAS_OBRIGATORIAS = [
 # 2. FUNÇÕES DE VALIDAÇÃO E AUTOMAÇÃO
 # ==========================================
 def validar_planilha(file):
-    """Lê as abas do arquivo e verifica se estão de acordo com o padrão exigido."""
     try:
         xls = pd.ExcelFile(file)
         abas_arquivo = xls.sheet_names
-        
-        # Verifica quais abas obrigatórias estão faltando
         abas_faltantes = [aba for aba in ABAS_OBRIGATORIAS if aba not in abas_arquivo]
-        
         if abas_faltantes:
             return False, f"Planilha fora do padrão! Faltam as seguintes abas: {', '.join(abas_faltantes)}"
         return True, "Planilha validada com sucesso."
@@ -40,7 +34,6 @@ def validar_planilha(file):
         return False, f"Erro ao ler o arquivo. Certifique-se de que é um Excel válido. Detalhe: {e}"
 
 def extrair_mes_automatico(file):
-    """Lê a planilha na memória e detecta o mês baseado nos dados operacionais"""
     try:
         df_temp = pd.read_excel(file, sheet_name="OCUPAÇÃO", usecols=["DATA"])
         datas = pd.to_datetime(df_temp["DATA"], errors="coerce").dropna()
@@ -63,14 +56,12 @@ with st.sidebar.expander("➕ Adicionar / Atualizar Mês", expanded=False):
     arquivo_carregado = st.file_uploader("Planilha (.xlsx)", type=["xlsx"])
     
     if arquivo_carregado:
-        # PASSO 1: O Escudo - Valida a planilha antes de qualquer coisa
         valida, mensagem = validar_planilha(arquivo_carregado)
         
         if not valida:
             st.error("❌ " + mensagem)
-            st.stop() # Para a execução aqui, impedindo que o erro quebre o dashboard
+            st.stop()
         else:
-            # PASSO 2: A Inteligência - Se for válida, descobre de que mês é
             nome_mes_auto = extrair_mes_automatico(arquivo_carregado)
             
             if nome_mes_auto:
@@ -150,7 +141,6 @@ def compilar_historico(arquivos):
 st.sidebar.divider()
 st.sidebar.title("🧭 Navegação")
 
-# Seleção do Mês
 mes_analise = st.sidebar.selectbox("📅 Mês de Análise:", [f.replace(".xlsx", "") for f in arquivos_salvos], index=len(arquivos_salvos)-1)
 caminho_selecionado = os.path.join(PASTA_HISTORICO, f"{mes_analise}.xlsx")
 dados = load_data(caminho_selecionado)
@@ -165,12 +155,9 @@ lista_turnos = ["Todos"] + list(dados['turmas']['TURNO'].dropna().unique())
 turno_selecionado = st.sidebar.selectbox("Filtro de Turno:", lista_turnos)
 
 # ==========================================
-# 7. ROTEAMENTO DAS PÁGINAS
+# 7. ROTEAMENTO DAS PÁGINAS E LÓGICAS
 # ==========================================
 
-# ------------------------------------------
-# PÁGINA 4: EVOLUÇÃO HISTÓRICA
-# ------------------------------------------
 if pagina_selecionada == "📈 Evolução Histórica":
     st.title("📈 Evolução e Tendências (Comparativo Mensal)")
     st.markdown("Esta página consolida os dados de todos os meses arquivados no sistema para análise de tendências.")
@@ -179,27 +166,20 @@ if pagina_selecionada == "📈 Evolução Histórica":
     
     if len(df_historico) > 1:
         col1, col2 = st.columns(2)
-        
         with col1:
             fig_hist_oc = px.line(df_historico, x="Mês", y="Ocupação Média (%)", markers=True, 
-                                  title="Evolução da Ocupação Média dos Ambientes",
-                                  line_shape="spline", color_discrete_sequence=['#1f77b4'])
+                                  title="Evolução da Ocupação Média dos Ambientes", line_shape="spline")
             fig_hist_oc.update_yaxes(range=[0, 100])
             st.plotly_chart(fig_hist_oc, use_container_width=True)
-            
         with col2:
             fig_hist_nr = px.bar(df_historico, x="Mês", y="Horas Não Regência", text_auto=True,
-                                 title="Volume de Horas de Não Regência por Mês",
-                                 color="Horas Não Regência", color_continuous_scale="Reds")
+                                 title="Volume de Horas de Não Regência por Mês", color="Horas Não Regência", color_continuous_scale="Reds")
             st.plotly_chart(fig_hist_nr, use_container_width=True)
             
         st.dataframe(df_historico, use_container_width=True, hide_index=True)
     else:
         st.warning("⚠️ Você precisa de pelo menos 2 meses arquivados no sistema para gerar gráficos de evolução.")
 
-# ------------------------------------------
-# PÁGINAS 1 a 3 
-# ------------------------------------------
 else:
     if turno_selecionado != "Todos":
         df_turmas_f = dados['turmas'][dados['turmas']['TURNO'] == turno_selecionado]
@@ -210,8 +190,9 @@ else:
 
     if pagina_selecionada == "🌐 Visão 360º":
         st.title(f"🌐 Visão Institucional - {mes_analise[5:]}") 
-        col1, col2, col3, col4, col5 = st.columns(5)
         
+        # --- BLOCO 1: MÉTRICAS GERAIS ---
+        col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("Turmas Abertas", len(df_turmas_f))
         col2.metric("Alunos", df_turmas_f['VAGAS_OCUPADAS'].sum() if not df_turmas_f.empty else 0)
         col3.metric("Salas Físicas", len(dados['amb'][dados['amb']['VIRTUAL'] == 'NÃO']))
@@ -219,10 +200,38 @@ else:
         col5.metric("Faltas Registradas", len(dados['faltas']))
         
         st.divider()
-        st.markdown("#### Status de Execução das Disciplinas")
-        status_disc = dados['disc']['STATUS'].value_counts().reset_index()
+        
+        # --- BLOCO 2: NOVIDADE - PROGRESSO DA META (HORAS-AULA) ---
+        st.markdown("### 🎯 Execução da Carga Horária (Meta vs Realizado)")
+        st.caption("Acompanhamento das horas-aula baseadas no status das disciplinas.")
+        
+        # Trata o DataFrame de Disciplinas
+        df_disc = dados['disc'].copy()
+        
+        # Normaliza o texto de Status para evitar erros (ex: "Concluído" vs "CONCLUÍDO")
+        df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
+        
+        carga_total = df_disc['CARGA_HORARIA'].sum()
+        # Filtra apenas o que já foi efetivamente entregue (Concluído)
+        carga_cumprida = df_disc[df_disc['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['CARGA_HORARIA'].sum()
+        
+        perc_conclusao = (carga_cumprida / carga_total) * 100 if carga_total > 0 else 0
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("📚 Carga Horária Total (Meta)", f"{carga_total}h")
+        col_m2.metric("✅ Horas Cumpridas", f"{carga_cumprida}h")
+        col_m3.metric("🚀 Progresso da Meta", f"{perc_conclusao:.1f}%")
+        
+        # Barra de progresso visual (limitada a 100% por segurança)
+        st.progress(min(int(perc_conclusao), 100))
+        
+        st.divider()
+        
+        # --- BLOCO 3: STATUS DAS DISCIPLINAS ---
+        st.markdown("#### Detalhamento de Execução das Disciplinas")
+        status_disc = df_disc['STATUS'].value_counts().reset_index()
         status_disc.columns = ['Status', 'Quantidade']
-        st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4), use_container_width=True)
+        st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, color_discrete_sequence=px.colors.sequential.Teal), use_container_width=True)
 
     elif pagina_selecionada == "👥 Análise de Docentes (RH)":
         st.title(f"👥 Docentes e Não Regência - {mes_analise[5:]}")
