@@ -9,41 +9,83 @@ import os
 st.set_page_config(page_title="Dashboard Digitech", layout="wide", page_icon="📊")
 
 PASTA_HISTORICO = "historico_dados"
-os.makedirs(PASTA_HISTORICO, exist_ok=True) # Cria a pasta automaticamente se não existir
+os.makedirs(PASTA_HISTORICO, exist_ok=True)
+
+# Dicionário para padronizar os nomes dos meses em português
+MESES_PT = {1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun', 
+            7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'}
 
 # ==========================================
-# 2. MENU LATERAL: GESTÃO DE UPLOADS
+# 2. FUNÇÃO DE DETECÇÃO AUTOMÁTICA DE MÊS
+# ==========================================
+def extrair_mes_automatico(file):
+    """Lê a planilha na memória e detecta o mês baseado nos dados operacionais"""
+    try:
+        # Lê apenas a coluna de DATA da aba de Ocupação para ser extremamente rápido
+        df_temp = pd.read_excel(file, sheet_name="OCUPAÇÃO", usecols=["DATA"])
+        datas = pd.to_datetime(df_temp["DATA"], errors="coerce").dropna()
+        
+        if not datas.empty:
+            # Pega a data que mais aparece (moda) para definir qual é o mês da planilha
+            data_predominante = datas.mode()[0]
+            mes_num = data_predominante.month
+            ano = data_predominante.year
+            
+            # Formata no padrão: "03 - Mar 2026" (Isso garante a ordem alfabética/numérica correta no histórico)
+            nome_padronizado = f"{mes_num:02d} - {MESES_PT[mes_num]} {ano}"
+            return nome_padronizado
+    except Exception as e:
+        return None
+    return None
+
+# ==========================================
+# 3. MENU LATERAL: UPLOAD AUTOMATIZADO
 # ==========================================
 st.sidebar.title("📥 Gestão de Dados")
 
-with st.sidebar.expander("➕ Adicionar Novo Mês", expanded=False):
-    st.markdown("Faça o upload da planilha mensal para guardá-la no histórico.")
+with st.sidebar.expander("➕ Adicionar / Atualizar Mês", expanded=False):
+    st.markdown("Arraste a planilha. O sistema detectará o mês automaticamente.")
     arquivo_carregado = st.file_uploader("Planilha (.xlsx)", type=["xlsx"])
-    nome_mes = st.text_input("Nome do Mês/Ano (Ex: 01 - Jan 2026)")
     
-    if st.button("💾 Salvar no Histórico"):
-        if arquivo_carregado and nome_mes:
-            caminho_arquivo = os.path.join(PASTA_HISTORICO, f"{nome_mes}.xlsx")
-            # Salva o arquivo fisicamente na pasta
-            with open(caminho_arquivo, "wb") as f:
-                f.write(arquivo_carregado.getbuffer())
-            st.success(f"Dados de {nome_mes} salvos com sucesso!")
-            st.rerun() # Recarrega a página para atualizar a lista
+    if arquivo_carregado:
+        # Detecta o nome do mês lendo os dados por dentro
+        nome_mes_auto = extrair_mes_automatico(arquivo_carregado)
+        
+        if nome_mes_auto:
+            st.success(f"📅 Mês detectado nos dados: **{nome_mes_auto}**")
+            
+            caminho_arquivo = os.path.join(PASTA_HISTORICO, f"{nome_mes_auto}.xlsx")
+            
+            if os.path.exists(caminho_arquivo):
+                st.warning("⚠️ Este mês já existe. Prosseguir irá **atualizar e sobrescrever** os dados.")
+                texto_botao = "🔄 Atualizar Histórico"
+            else:
+                texto_botao = "💾 Salvar Novo Mês"
+                
+            if st.button(texto_botao):
+                # Volta o ponteiro do arquivo para o início antes de salvar
+                arquivo_carregado.seek(0)
+                with open(caminho_arquivo, "wb") as f:
+                    f.write(arquivo_carregado.getbuffer())
+                
+                st.cache_data.clear()
+                st.toast(f"Dados de '{nome_mes_auto}' gravados com sucesso!", icon="✅")
+                st.rerun()
         else:
-            st.warning("Insira o ficheiro e digite o nome do mês.")
+            st.error("❌ Não foi possível encontrar datas válidas na aba 'OCUPAÇÃO' para definir o mês. Verifique o padrão da planilha.")
 
 # ==========================================
-# 3. VERIFICAÇÃO DE HISTÓRICO EXISTENTE
+# 4. VERIFICAÇÃO DE HISTÓRICO EXISTENTE
 # ==========================================
 arquivos_salvos = sorted([f for f in os.listdir(PASTA_HISTORICO) if f.endswith('.xlsx')])
 
 if not arquivos_salvos:
     st.title("📊 Painel de Desempenho 360º - Digitech")
-    st.info("👈 **Cofre vazio!** Utilize o menu lateral esquerdo em 'Adicionar Novo Mês' para subir sua primeira planilha consolidada.")
+    st.info("👈 **Cofre vazio!** Faça o upload da sua planilha no menu lateral esquerdo. O sistema descobrirá o mês sozinho e criará seu histórico.")
     st.stop()
 
 # ==========================================
-# 4. CARREGAMENTO DOS DADOS (CACHE)
+# 5. CARREGAMENTO DOS DADOS (CACHE)
 # ==========================================
 @st.cache_data
 def load_data(file_path):
@@ -61,13 +103,11 @@ def load_data(file_path):
 
 @st.cache_data
 def compilar_historico(arquivos):
-    """Lê um resumo de todos os arquivos salvos para criar a linha do tempo"""
     dados_linha_tempo = []
     for arq in arquivos:
         mes = arq.replace(".xlsx", "")
         caminho = os.path.join(PASTA_HISTORICO, arq)
         try:
-            # Lendo apenas as abas essenciais para ser rápido
             df_nr = pd.read_excel(caminho, sheet_name="NÃO_REGÊNCIA")
             df_oc = pd.read_excel(caminho, sheet_name="OCUPAÇÃO")
             
@@ -84,31 +124,31 @@ def compilar_historico(arquivos):
     return pd.DataFrame(dados_linha_tempo)
 
 # ==========================================
-# 5. MENU LATERAL: NAVEGAÇÃO
+# 6. MENU LATERAL: NAVEGAÇÃO
 # ==========================================
 st.sidebar.divider()
 st.sidebar.title("🧭 Navegação")
 
-# Nova seleção de qual mês o usuário quer detalhar
-mes_analise = st.sidebar.selectbox("📅 Selecionar Mês para Detalhamento:", [f.replace(".xlsx", "") for f in arquivos_salvos])
+# Seleção do Mês
+mes_analise = st.sidebar.selectbox("📅 Mês de Análise:", [f.replace(".xlsx", "") for f in arquivos_salvos], index=len(arquivos_salvos)-1)
 caminho_selecionado = os.path.join(PASTA_HISTORICO, f"{mes_analise}.xlsx")
 dados = load_data(caminho_selecionado)
 
 pagina_selecionada = st.sidebar.radio(
     "Escolha o Painel:",
-    ["🌐 Visão 360º (Mês Atual)", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes", "📈 Evolução Histórica"]
+    ["🌐 Visão 360º", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes", "📈 Evolução Histórica"]
 )
 
 st.sidebar.divider()
 lista_turnos = ["Todos"] + list(dados['turmas']['TURNO'].dropna().unique())
-turno_selecionado = st.sidebar.selectbox("Filtro de Turno (Páginas de Detalhe):", lista_turnos)
+turno_selecionado = st.sidebar.selectbox("Filtro de Turno:", lista_turnos)
 
 # ==========================================
-# 6. ROTEAMENTO DAS PÁGINAS
+# 7. ROTEAMENTO DAS PÁGINAS
 # ==========================================
 
 # ------------------------------------------
-# NOVA PÁGINA 4: EVOLUÇÃO HISTÓRICA
+# PÁGINA 4: EVOLUÇÃO HISTÓRICA
 # ------------------------------------------
 if pagina_selecionada == "📈 Evolução Histórica":
     st.title("📈 Evolução e Tendências (Comparativo Mensal)")
@@ -137,10 +177,9 @@ if pagina_selecionada == "📈 Evolução Histórica":
         st.warning("⚠️ Você precisa de pelo menos 2 meses arquivados no sistema para gerar gráficos de evolução.")
 
 # ------------------------------------------
-# PÁGINAS 1 a 3 (Adaptadas para ler o dicionário 'dados')
+# PÁGINAS 1 a 3 
 # ------------------------------------------
 else:
-    # Aplicando o filtro de turno
     if turno_selecionado != "Todos":
         df_turmas_f = dados['turmas'][dados['turmas']['TURNO'] == turno_selecionado]
         df_ocupacao_f = dados['ocupacao'][dados['ocupacao']['TURNO'] == turno_selecionado] if 'TURNO' in dados['ocupacao'].columns else dados['ocupacao']
@@ -148,15 +187,15 @@ else:
         df_turmas_f = dados['turmas'].copy()
         df_ocupacao_f = dados['ocupacao'].copy()
 
-    if pagina_selecionada == "🌐 Visão 360º (Mês Atual)":
-        st.title(f"🌐 Visão Institucional - {mes_analise}")
+    if pagina_selecionada == "🌐 Visão 360º":
+        st.title(f"🌐 Visão Institucional - {mes_analise[5:]}") # Remove os números "03 - " do título para ficar mais limpo
         col1, col2, col3, col4, col5 = st.columns(5)
         
         col1.metric("Turmas Abertas", len(df_turmas_f))
         col2.metric("Alunos", df_turmas_f['VAGAS_OCUPADAS'].sum() if not df_turmas_f.empty else 0)
         col3.metric("Salas Físicas", len(dados['amb'][dados['amb']['VIRTUAL'] == 'NÃO']))
         col4.metric("Instrutores", len(dados['inst']))
-        col5.metric("Faltas Registadas", len(dados['faltas']))
+        col5.metric("Faltas Registradas", len(dados['faltas']))
         
         st.divider()
         st.markdown("#### Status de Execução das Disciplinas")
@@ -165,19 +204,19 @@ else:
         st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4), use_container_width=True)
 
     elif pagina_selecionada == "👥 Análise de Docentes (RH)":
-        st.title(f"👥 Docentes e Não Regência - {mes_analise}")
+        st.title(f"👥 Docentes e Não Regência - {mes_analise[5:]}")
         df_nr_det = pd.merge(dados['nr'], dados['inst'][['ID', 'NOME_COMPLETO']], left_on='ID_INSTRUTOR', right_on='ID', how='left')
         
         if not df_nr_det.empty:
             df_horas_inst = df_nr_det.groupby('NOME_COMPLETO')['HORAS_NAO_REGENCIA'].sum().reset_index().sort_values('HORAS_NAO_REGENCIA')
-            st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência"), use_container_width=True)
+            st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência", color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges'), use_container_width=True)
             st.dataframe(df_nr_det[['DATA', 'NOME_COMPLETO', 'TIPO_ATIVIDADE', 'HORAS_NAO_REGENCIA']], use_container_width=True, hide_index=True)
         else:
             st.info("Sem dados de Não Regência para este mês.")
 
     elif pagina_selecionada == "🏢 Ocupação e Ambientes":
-        st.title(f"🏢 Uso de Laboratórios e Salas - {mes_analise}")
+        st.title(f"🏢 Uso de Laboratórios e Salas - {mes_analise[5:]}")
         if not df_ocupacao_f.empty:
             df_amb_uso = df_ocupacao_f.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
             df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
-            st.plotly_chart(px.bar(df_amb_uso.sort_values('PERCENTUAL_OCUPACAO'), x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', title="Ocupação Média (%)"), use_container_width=True)
+            st.plotly_chart(px.bar(df_amb_uso.sort_values('PERCENTUAL_OCUPACAO'), x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', title="Ocupação Média (%)", color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues'), use_container_width=True)
