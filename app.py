@@ -7,23 +7,29 @@ st.set_page_config(page_title="Dashboard de Desempenho Institucional", layout="w
 st.title("📊 Painel de Desempenho - Digitech 2026")
 
 # 2. Carregamento e Tratamento dos Dados
-# Dica: O st.cache_data ajuda a não recarregar os dados toda vez que a tela for atualizada
 @st.cache_data
 def load_data():
-    # Observação: Ajuste o caminho dos arquivos conforme a sua pasta no Streamlit Cloud
-    # Alguns arquivos tinham cabeçalhos deslocados, usamos skiprows onde necessário
-    df_turmas = pd.read_csv("Consolidado - Status 2026.xlsx - TURMAS.csv")
-    df_ocupacao = pd.read_csv("Consolidado - Status 2026.xlsx - OCUPAÇÃO.csv")
-    df_nao_regencia = pd.read_csv("Consolidado - Status 2026.xlsx - NÃO_REGÊNCIA.csv")
-    df_instrutores = pd.read_csv("Consolidado - Status 2026.xlsx - INSTRUTORES.csv")
-    df_parametros = pd.read_csv("Consolidado - Status 2026.xlsx - PARÂMETROS.csv", skiprows=9)
+    # Nome do arquivo Excel único
+    arquivo_excel = "Consolidado - Status 2026.xlsx"
+    
+    # Carregando cada aba (sheet) como um DataFrame diferente
+    df_turmas = pd.read_excel(arquivo_excel, sheet_name="TURMAS")
+    df_ocupacao = pd.read_excel(arquivo_excel, sheet_name="OCUPAÇÃO")
+    df_nao_regencia = pd.read_excel(arquivo_excel, sheet_name="NÃO_REGÊNCIA")
+    df_instrutores = pd.read_excel(arquivo_excel, sheet_name="INSTRUTORES")
+    
+    # A aba de parâmetros possui linhas em branco no topo, por isso usamos skiprows=9
+    df_parametros = pd.read_excel(arquivo_excel, sheet_name="PARÂMETROS", skiprows=9)
     
     return df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros
 
 try:
     df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros = load_data()
 except FileNotFoundError:
-    st.error("Arquivos CSV não encontrados. Verifique se os nomes e o diretório estão corretos.")
+    st.error("Arquivo Excel não encontrado. Verifique se o nome 'Consolidado - Status 2026.xlsx' está correto e na mesma pasta.")
+    st.stop()
+except ValueError as e:
+    st.error(f"Erro ao carregar as abas do Excel. Verifique se os nomes das abas estão exatos. Erro: {e}")
     st.stop()
 
 # 3. Cálculo de Métricas (KPIs)
@@ -46,7 +52,6 @@ with col1:
 with col2:
     st.metric("Taxa de Preenchimento (Vagas)", f"{taxa_preenchimento:.1f}%", f"{vagas_ocupadas} alunos")
 with col3:
-    # Mostra a ocupação e compara com a meta (verde se positivo, vermelho se negativo)
     st.metric("Ocupação Média Física", f"{ocupacao_media:.1f}%", f"Meta: {meta_ocupacao_ideal}%")
 with col4:
     st.metric("Instrutores Ativos", total_instrutores_ativos)
@@ -58,7 +63,6 @@ colA, colB = st.columns(2)
 
 with colA:
     st.markdown("#### Ocupação de Vagas por Turma")
-    # Gráfico de barras comparando vagas totais e ocupadas
     df_turmas_melt = df_turmas.melt(id_vars=['NOME_TURMA'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
                                     var_name='Tipo', value_name='Quantidade')
     fig_vagas = px.bar(df_turmas_melt, x='NOME_TURMA', y='Quantidade', color='Tipo', barmode='group',
@@ -69,13 +73,11 @@ with colA:
 
 with colB:
     st.markdown("#### Ocupação Média por Ambiente")
-    # Agrupando por ambiente para ver quais salas são mais usadas
     df_amb_ocup = df_ocupacao.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
     df_amb_ocup['PERCENTUAL_OCUPACAO'] *= 100
     fig_ambientes = px.bar(df_amb_ocup, x='AMBIENTE', y='PERCENTUAL_OCUPACAO', 
                            labels={'AMBIENTE': 'Ambiente', 'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)'},
                            color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues')
-    # Linha de meta
     fig_ambientes.add_hline(y=meta_ocupacao_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
     st.plotly_chart(fig_ambientes, use_container_width=True)
 
@@ -86,14 +88,12 @@ colC, colD = st.columns(2)
 
 with colC:
     st.markdown("#### Distribuição de Atividades: Não Regência")
-    # Gráfico de pizza mostrando onde os professores gastam tempo fora de sala
     df_nr_agrupado = df_nao_regencia.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
     fig_nr = px.pie(df_nr_agrupado, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4)
     st.plotly_chart(fig_nr, use_container_width=True)
 
 with colD:
     st.markdown("#### Status dos Instrutores")
-    # Entender gargalos de RH (Ativos vs Férias/World Skills)
     status_counts = df_instrutores['OBSERVAÇÃO'].fillna('SEM OBSERVAÇÃO').value_counts().reset_index()
     status_counts.columns = ['Status/Observação', 'Quantidade']
     fig_status = px.bar(status_counts, y='Status/Observação', x='Quantidade', orientation='h',
