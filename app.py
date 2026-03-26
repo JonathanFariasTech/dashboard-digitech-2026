@@ -2,138 +2,197 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Configuração da Página
-st.set_page_config(page_title="Dashboard 360º - Digitech 2026", layout="wide")
-st.title("📊 Painel de Desempenho 360º - Digitech 2026")
+# ==========================================
+# 1. CONFIGURAÇÃO DA PÁGINA
+# ==========================================
+st.set_page_config(page_title="Dashboard Digitech 2026", layout="wide", page_icon="📊")
 
-# 2. Carregamento de TODAS as abas
+# ==========================================
+# 2. CARREGAMENTO DOS DADOS
+# ==========================================
 @st.cache_data
 def load_data():
     arquivo_excel = "Consolidado - Status 2026.xlsx"
     xls = pd.ExcelFile(arquivo_excel)
     
-    # Lendo todas as abas estratégicas
+    # Lendo as abas com os devidos tratamentos de cabeçalho
     df_turmas = pd.read_excel(xls, sheet_name="TURMAS")
     df_ocupacao = pd.read_excel(xls, sheet_name="OCUPAÇÃO")
-    df_nao_regencia = pd.read_excel(xls, sheet_name="NÃO_REGÊNCIA")
-    df_instrutores = pd.read_excel(xls, sheet_name="INSTRUTORES")
-    df_disciplinas = pd.read_excel(xls, sheet_name="DISCIPLINAS", skiprows=1) # Tratando cabeçalho
-    df_ambientes = pd.read_excel(xls, sheet_name="AMBIENTES")
+    df_nr = pd.read_excel(xls, sheet_name="NÃO_REGÊNCIA")
+    df_inst = pd.read_excel(xls, sheet_name="INSTRUTORES")
+    df_disc = pd.read_excel(xls, sheet_name="DISCIPLINAS", skiprows=1)
+    df_amb = pd.read_excel(xls, sheet_name="AMBIENTES")
     df_faltas = pd.read_excel(xls, sheet_name="FALTAS")
     df_param = pd.read_excel(xls, sheet_name="PARÂMETROS", skiprows=9)
     
-    return df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_disciplinas, df_ambientes, df_faltas, df_param
+    return df_turmas, df_ocupacao, df_nr, df_inst, df_disc, df_amb, df_faltas, df_param
 
 try:
     df_turmas, df_ocupacao, df_nr, df_inst, df_disc, df_amb, df_faltas, df_param = load_data()
 except Exception as e:
-    st.error(f"Erro ao carregar o arquivo: {e}")
+    st.error(f"Erro ao carregar o ficheiro Excel. Verifique se o nome está correto e na mesma pasta. Detalhe: {e}")
     st.stop()
 
 # ==========================================
-# SEÇÃO 1: MÉTRICAS GERAIS (LENDO TUDO)
+# 3. MENU LATERAL (SIDEBAR) E FILTROS
 # ==========================================
-st.markdown("### 🌐 Visão Institucional Completa")
+st.sidebar.title("🧭 Navegação")
+pagina_selecionada = st.sidebar.radio(
+    "Escolha o Painel:",
+    ["🌐 Visão 360º", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes"]
+)
 
-# Cálculos de todas as abas
-total_turmas = len(df_turmas)
-total_alunos_ativos = df_turmas['VAGAS_OCUPADAS'].sum()
-total_amb_fisicos = len(df_amb[df_amb['VIRTUAL'] == 'NÃO'])
-total_instrutores = len(df_inst)
-total_disciplinas = len(df_disc)
-horas_nao_regencia_total = df_nr['HORAS_NAO_REGENCIA'].sum()
-registros_faltas = len(df_faltas)
+st.sidebar.divider()
 
-col1, col2, col3, col4, col5, col6 = st.columns(6)
-col1.metric("Turmas Abertas", total_turmas)
-col2.metric("Alunos Ocupando Vagas", total_alunos_ativos)
-col3.metric("Salas Físicas (Ambientes)", total_amb_fisicos)
-col4.metric("Corpo Docente", total_instrutores)
-col5.metric("Total de Disciplinas", total_disciplinas)
-col6.metric("Faltas Registradas", registros_faltas)
+st.sidebar.markdown("### 🔍 Filtros Globais")
+# Criar lista de turnos únicos e adicionar a opção "Todos"
+lista_turnos = ["Todos"] + list(df_turmas['TURNO'].dropna().unique())
+turno_selecionado = st.sidebar.selectbox("Filtrar por Turno:", lista_turnos)
 
-st.divider()
-
-# ==========================================
-# SEÇÃO 2: RH DOCENTE E OCUPAÇÃO
-# ==========================================
-colA, colB = st.columns(2)
-
-with colA:
-    st.markdown("#### 👤 Instrutores Fora de Regência (Afastamentos)")
-    
-    # Filtra apenas os professores que TEM observação (Remove os vazios)
-    df_inst_afastados = df_inst.dropna(subset=['OBSERVAÇÃO']).copy()
-    
-    # Função para encurtar o nome e não quebrar o gráfico (Ex: "Raphael Barreto de Oliveira" -> "Raphael Oliveira")
-    def encurtar_nome(nome):
-        partes = str(nome).split()
-        if len(partes) > 1:
-            return f"{partes[0]} {partes[-1]}"
-        return nome
-        
-    df_inst_afastados['Nome Curto'] = df_inst_afastados['NOME_COMPLETO'].apply(encurtar_nome)
-    
-    if not df_inst_afastados.empty:
-        # Gráfico focado nas observações
-        fig_inst = px.bar(
-            df_inst_afastados, 
-            x="OBSERVAÇÃO", 
-            y="Nome Curto", 
-            color="OBSERVAÇÃO",
-            orientation='h',
-            labels={'Nome Curto': 'Instrutor', 'OBSERVAÇÃO': 'Motivo'}
-        )
-        # Ajustando altura para caber todo mundo sem esmagar
-        fig_inst.update_layout(height=450, showlegend=False)
-        st.plotly_chart(fig_inst, use_container_width=True)
+# Aplicar o filtro nos DataFrames que possuem a coluna TURNO
+if turno_selecionado != "Todos":
+    df_turmas_filtrado = df_turmas[df_turmas['TURNO'] == turno_selecionado]
+    # Na aba ocupação, o turno também costuma estar presente para análise de salas
+    if 'TURNO' in df_ocupacao.columns:
+        df_ocupacao_filtrado = df_ocupacao[df_ocupacao['TURNO'] == turno_selecionado]
     else:
-        st.success("Excelente! Todos os instrutores estão sem observações de afastamento no momento.")
+        df_ocupacao_filtrado = df_ocupacao.copy()
+else:
+    df_turmas_filtrado = df_turmas.copy()
+    df_ocupacao_filtrado = df_ocupacao.copy()
 
-with colB:
-    st.markdown("#### 📊 Ocupação de Vagas nas Turmas")
-    # Encurtando o nome da turma para o gráfico ficar legível
-    df_turmas['Turma Curta'] = df_turmas['NOME_TURMA'].apply(lambda x: x[:25] + "..." if len(str(x)) > 25 else x)
-    
-    df_t_melt = df_turmas.melt(id_vars=['Turma Curta'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
-                               var_name='Tipo', value_name='Quantidade')
-    
-    fig_vagas = px.bar(df_t_melt, x='Turma Curta', y='Quantidade', color='Tipo', barmode='group',
-                       color_discrete_sequence=['#1f77b4', '#ff7f0e'])
-    
-    fig_vagas.update_layout(height=450, xaxis_title="", yaxis_title="Vagas")
-    st.plotly_chart(fig_vagas, use_container_width=True)
+st.sidebar.info("💡 **Dica:** O filtro de Turno afeta as métricas de Turmas e Ocupação de Ambientes.")
 
-st.divider()
+# Função auxiliar para encurtar nomes nos gráficos
+def encurtar_nome(nome):
+    partes = str(nome).split()
+    if len(partes) > 1:
+        return f"{partes[0]} {partes[-1]}"
+    return nome
 
 # ==========================================
-# SEÇÃO 3: PRODUTIVIDADE E AMBIENTES
+# 4. ROTEAMENTO DAS PÁGINAS
 # ==========================================
-colC, colD = st.columns(2)
 
-with colC:
-    st.markdown("#### 📚 Status Geral das Disciplinas")
+# ------------------------------------------
+# PÁGINA 1: VISÃO 360º
+# ------------------------------------------
+if pagina_selecionada == "🌐 Visão 360º":
+    st.title("🌐 Visão Institucional Completa")
+    st.markdown("Visão geral de todas as métricas da unidade (Os dados de turmas respeitam o filtro lateral).")
+    
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    
+    total_alunos = df_turmas_filtrado['VAGAS_OCUPADAS'].sum() if not df_turmas_filtrado.empty else 0
+    total_salas_fisicas = len(df_amb[df_amb['VIRTUAL'] == 'NÃO'])
+    
+    col1.metric("Turmas Abertas", len(df_turmas_filtrado))
+    col2.metric("Alunos Matriculados", total_alunos)
+    col3.metric("Salas Físicas", total_salas_fisicas)
+    col4.metric("Corpo Docente", len(df_inst))
+    col5.metric("Total de Disciplinas", len(df_disc))
+    col6.metric("Faltas Registadas", len(df_faltas))
+    
+    st.divider()
+    
+    # Gráfico Rápido de Status das Disciplinas na Visão Geral
+    st.markdown("#### Status de Execução das Disciplinas")
     status_disc = df_disc['STATUS'].value_counts().reset_index()
     status_disc.columns = ['Status', 'Quantidade']
-    
     fig_disc = px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, 
                       color_discrete_sequence=px.colors.qualitative.Pastel)
-    fig_disc.update_layout(height=400)
+    fig_disc.update_layout(height=350)
     st.plotly_chart(fig_disc, use_container_width=True)
 
-with colD:
-    st.markdown("#### 🏢 Eficiência no Uso de Salas")
-    df_amb_uso = df_ocupacao.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
-    df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
-    df_amb_uso = df_amb_uso.sort_values('PERCENTUAL_OCUPACAO', ascending=True) # Ordena do menor pro maior uso
+
+# ------------------------------------------
+# PÁGINA 2: ANÁLISE DE DOCENTES (RH)
+# ------------------------------------------
+elif pagina_selecionada == "👥 Análise de Docentes (RH)":
+    st.title("👥 Desempenho e Alocação de Instrutores")
     
-    fig_amb = px.bar(df_amb_uso, x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', 
-                     color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues',
-                     labels={'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)', 'AMBIENTE': ''})
-                     
-    # Pegando a meta da aba de parâmetros
-    meta_ideal = df_param[df_param['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
-    fig_amb.add_vline(x=meta_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
+    # Criando Abas para organizar o conteúdo
+    aba1, aba2 = st.tabs(["📌 Afastamentos e Status", "⏳ Horas de Não Regência"])
     
-    fig_amb.update_layout(height=400)
-    st.plotly_chart(fig_amb, use_container_width=True)
+    with aba1:
+        st.markdown("#### Profissionais com Observações (Férias/Afastamentos)")
+        df_inst_afastados = df_inst.dropna(subset=['OBSERVAÇÃO']).copy()
+        
+        if not df_inst_afastados.empty:
+            df_inst_afastados['Nome Curto'] = df_inst_afastados['NOME_COMPLETO'].apply(encurtar_nome)
+            fig_inst = px.bar(
+                df_inst_afastados, 
+                x="OBSERVAÇÃO", 
+                y="Nome Curto", 
+                color="OBSERVAÇÃO",
+                orientation='h',
+                labels={'Nome Curto': 'Instrutor', 'OBSERVAÇÃO': 'Motivo'}
+            )
+            fig_inst.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig_inst, use_container_width=True)
+            
+            # Tabela detalhada abaixo do gráfico
+            with st.expander("Ver lista detalhada de docentes"):
+                st.dataframe(df_inst_afastados[['NOME_COMPLETO', 'EMAIL', 'OBSERVAÇÃO']], use_container_width=True)
+        else:
+            st.success("Todos os instrutores estão ativos e sem observações de afastamento neste momento.")
+
+    with aba2:
+        st.markdown("#### Distribuição de Atividades: Não Regência")
+        if not df_nr.empty:
+            df_nr_agrupado = df_nr.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
+            fig_nr = px.pie(df_nr_agrupado, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4)
+            fig_nr.update_layout(height=450)
+            st.plotly_chart(fig_nr, use_container_width=True)
+        else:
+            st.info("Não há dados de Não Regência registados.")
+
+
+# ------------------------------------------
+# PÁGINA 3: OCUPAÇÃO E AMBIENTES
+# ------------------------------------------
+elif pagina_selecionada == "🏢 Ocupação e Ambientes":
+    st.title("🏢 Análise de Uso de Laboratórios e Salas")
+    if turno_selecionado != "Todos":
+        st.caption(f"Visualizando dados apenas para o turno: **{turno_selecionado}**")
+    
+    aba_vagas, aba_salas = st.tabs(["🎓 Ocupação de Vagas (Turmas)", "🏫 Uso de Salas Físicas"])
+    
+    with aba_vagas:
+        st.markdown("#### Preenchimento de Vagas por Turma")
+        if not df_turmas_filtrado.empty:
+            df_turmas_filtrado['Turma Curta'] = df_turmas_filtrado['NOME_TURMA'].apply(lambda x: str(x)[:30] + "..." if len(str(x)) > 30 else x)
+            df_t_melt = df_turmas_filtrado.melt(id_vars=['Turma Curta'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
+                                                var_name='Tipo', value_name='Quantidade')
+            
+            fig_vagas = px.bar(df_t_melt, x='Turma Curta', y='Quantidade', color='Tipo', barmode='group',
+                               color_discrete_sequence=['#1f77b4', '#ff7f0e'],
+                               labels={'Turma Curta': 'Turma', 'Quantidade': 'Nº de Vagas'})
+            
+            fig_vagas.update_layout(height=500)
+            st.plotly_chart(fig_vagas, use_container_width=True)
+        else:
+            st.warning(f"Não há turmas registadas para o turno {turno_selecionado}.")
+
+    with aba_salas:
+        st.markdown("#### Ranking de Ocupação Média por Ambiente")
+        if not df_ocupacao_filtrado.empty:
+            df_amb_uso = df_ocupacao_filtrado.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
+            df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
+            df_amb_uso = df_amb_uso.sort_values('PERCENTUAL_OCUPACAO', ascending=True)
+            
+            fig_amb = px.bar(df_amb_uso, x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', 
+                             color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues',
+                             labels={'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)', 'AMBIENTE': 'Sala / Laboratório'})
+                             
+            # Adicionar linha de meta
+            try:
+                meta_ideal = df_param[df_param['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
+                fig_amb.add_vline(x=meta_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
+            except:
+                pass # Caso o parâmetro não seja encontrado
+            
+            fig_amb.update_layout(height=600)
+            st.plotly_chart(fig_amb, use_container_width=True)
+        else:
+            st.warning(f"Não há dados de ocupação de salas registados para o turno {turno_selecionado}.")
