@@ -1,151 +1,101 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-import io
 
-# Configuração da Página
-st.set_page_config(
-    page_title="Dashboard DIGITECH 2026",
-    page_icon="📊",
-    layout="wide"
-)
+# 1. Configuração da Página
+st.set_page_config(page_title="Dashboard de Desempenho Institucional", layout="wide")
+st.title("📊 Painel de Desempenho - Digitech 2026")
 
-# Título
-st.title("📊 Dashboard de Gestão - DIGITECH 2026")
-st.markdown("---")
+# 2. Carregamento e Tratamento dos Dados
+# Dica: O st.cache_data ajuda a não recarregar os dados toda vez que a tela for atualizada
+@st.cache_data
+def load_data():
+    # Observação: Ajuste o caminho dos arquivos conforme a sua pasta no Streamlit Cloud
+    # Alguns arquivos tinham cabeçalhos deslocados, usamos skiprows onde necessário
+    df_turmas = pd.read_csv("Consolidado - Status 2026.xlsx - TURMAS.csv")
+    df_ocupacao = pd.read_csv("Consolidado - Status 2026.xlsx - OCUPAÇÃO.csv")
+    df_nao_regencia = pd.read_csv("Consolidado - Status 2026.xlsx - NÃO_REGÊNCIA.csv")
+    df_instrutores = pd.read_csv("Consolidado - Status 2026.xlsx - INSTRUTORES.csv")
+    df_parametros = pd.read_csv("Consolidado - Status 2026.xlsx - PARÂMETROS.csv", skiprows=9)
+    
+    return df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros
 
-# 🔍 SIDEBAR COM FILTROS
-st.sidebar.header("🔍 Filtros")
-filtro_turno = st.sidebar.multiselect(
-    "Turno:", 
-    ["MANHÃ", "TARDE", "NOITE"], 
-    default=["MANHÃ", "TARDE", "NOITE"]
-)
-filtro_modalidade = st.sidebar.multiselect(
-    "Modalidade:", 
-    ["PRESENCIAL", "EAD"], 
-    default=["PRESENCIAL", "EAD"]
-)
+try:
+    df_turmas, df_ocupacao, df_nao_regencia, df_instrutores, df_parametros = load_data()
+except FileNotFoundError:
+    st.error("Arquivos CSV não encontrados. Verifique se os nomes e o diretório estão corretos.")
+    st.stop()
 
-# 📈 KPIs PRINCIPAIS (Dados da planilha)
-st.subheader("📈 Indicadores Principais")
+# 3. Cálculo de Métricas (KPIs)
+turmas_ativas = df_turmas[df_turmas['STATUS'] == 'Em andamento'].shape[0]
+vagas_totais = df_turmas['VAGAS_TOTAL'].sum()
+vagas_ocupadas = df_turmas['VAGAS_OCUPADAS'].sum()
+taxa_preenchimento = (vagas_ocupadas / vagas_totais) * 100 if vagas_totais > 0 else 0
+
+ocupacao_media = df_ocupacao['PERCENTUAL_OCUPACAO'].mean() * 100
+meta_ocupacao_ideal = df_parametros[df_parametros['PARÂMETRO'] == 'Meta Ocupação Ideal']['VALOR'].values[0] * 100
+
+total_instrutores_ativos = df_instrutores[df_instrutores['STATUS'] == 'ATIVO'].shape[0]
+
+# 4. Exibição dos KPIs Superiores
+st.markdown("### 🎯 Indicadores Chave de Desempenho (KPIs)")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("Total Instrutores", "13")
+    st.metric("Turmas em Andamento", turmas_ativas)
 with col2:
-    st.metric("Turmas Ativas", "3")
+    st.metric("Taxa de Preenchimento (Vagas)", f"{taxa_preenchimento:.1f}%", f"{vagas_ocupadas} alunos")
 with col3:
-    st.metric("Ocupação Média", "78%")
+    # Mostra a ocupação e compara com a meta (verde se positivo, vermelho se negativo)
+    st.metric("Ocupação Média Física", f"{ocupacao_media:.1f}%", f"Meta: {meta_ocupacao_ideal}%")
 with col4:
-    st.metric("Horas Não Regência", "210")
+    st.metric("Instrutores Ativos", total_instrutores_ativos)
 
-st.markdown("---")
+st.divider()
 
-# 📊 GRÁFICO 1: Ocupação por Ambiente
-st.subheader("🏢 Ocupação por Ambiente")
+# 5. Gráficos de Desempenho
+colA, colB = st.columns(2)
 
-# Dados de exemplo baseados na sua planilha
-dados_ocupacao = pd.DataFrame({
-    'AMBIENTE': ['LABORATÓRIO DE SOFTWARE 04', 'LABORATÓRIO DE SOFTWARE 08', 'CYBER ARENA', 'ESPAÇO IA'],
-    'PERCENTUAL_OCUPACAO': [91.67, 62.50, 75.00, 45.00],
-    'STATUS': ['ALTA', 'MÉDIO', 'MÉDIO', 'BAIXA']
-})
+with colA:
+    st.markdown("#### Ocupação de Vagas por Turma")
+    # Gráfico de barras comparando vagas totais e ocupadas
+    df_turmas_melt = df_turmas.melt(id_vars=['NOME_TURMA'], value_vars=['VAGAS_TOTAL', 'VAGAS_OCUPADAS'], 
+                                    var_name='Tipo', value_name='Quantidade')
+    fig_vagas = px.bar(df_turmas_melt, x='NOME_TURMA', y='Quantidade', color='Tipo', barmode='group',
+                       labels={'NOME_TURMA': 'Turma', 'Quantidade': 'Nº de Vagas'},
+                       color_discrete_sequence=['#1f77b4', '#ff7f0e'])
+    fig_vagas.update_layout(xaxis_tickangle=-45)
+    st.plotly_chart(fig_vagas, use_container_width=True)
 
-fig_ocupacao = px.bar(
-    dados_ocupacao,
-    x='AMBIENTE',
-    y='PERCENTUAL_OCUPACAO',
-    color='PERCENTUAL_OCUPACAO',
-    color_continuous_scale='RdYlGn',
-    title='Percentual de Ocupação por Ambiente'
-)
-fig_ocupacao.add_hline(y=70, line_dash="dash", line_color="orange", annotation_text="Meta Mínima (70%)")
-fig_ocupacao.add_hline(y=85, line_dash="dash", line_color="green", annotation_text="Meta Ideal (85%)")
-fig_ocupacao.update_layout(height=400, xaxis_tickangle=-45)
-st.plotly_chart(fig_ocupacao, use_container_width=True)
+with colB:
+    st.markdown("#### Ocupação Média por Ambiente")
+    # Agrupando por ambiente para ver quais salas são mais usadas
+    df_amb_ocup = df_ocupacao.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
+    df_amb_ocup['PERCENTUAL_OCUPACAO'] *= 100
+    fig_ambientes = px.bar(df_amb_ocup, x='AMBIENTE', y='PERCENTUAL_OCUPACAO', 
+                           labels={'AMBIENTE': 'Ambiente', 'PERCENTUAL_OCUPACAO': 'Ocupação Média (%)'},
+                           color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues')
+    # Linha de meta
+    fig_ambientes.add_hline(y=meta_ocupacao_ideal, line_dash="dot", line_color="red", annotation_text="Meta Ideal")
+    st.plotly_chart(fig_ambientes, use_container_width=True)
 
-# 📊 GRÁFICO 2: Instrutores por Status
-st.subheader("👥 Distribuição de Instrutores")
+st.divider()
 
-dados_instrutores = pd.DataFrame({
-    'STATUS': ['ATIVO', 'EM FÉRIAS', 'CEDIDO'],
-    'QUANTIDADE': [11, 2, 1]
-})
+# 6. Desempenho e Alocação de Instrutores
+colC, colD = st.columns(2)
 
-fig_instrutores = px.pie(
-    dados_instrutores,
-    values='QUANTIDADE',
-    names='STATUS',
-    title='Status dos Instrutores',
-    color_discrete_sequence=px.colors.qualitative.Set2
-)
-st.plotly_chart(fig_instrutores, use_container_width=True)
+with colC:
+    st.markdown("#### Distribuição de Atividades: Não Regência")
+    # Gráfico de pizza mostrando onde os professores gastam tempo fora de sala
+    df_nr_agrupado = df_nao_regencia.groupby('TIPO_ATIVIDADE')['HORAS_NAO_REGENCIA'].sum().reset_index()
+    fig_nr = px.pie(df_nr_agrupado, values='HORAS_NAO_REGENCIA', names='TIPO_ATIVIDADE', hole=0.4)
+    st.plotly_chart(fig_nr, use_container_width=True)
 
-# 📊 GRÁFICO 3: Horas de Não Regência por Tipo
-st.subheader("⏱️ Horas de Não Regência por Atividade")
-
-dados_nao_regencia = pd.DataFrame({
-    'TIPO_ATIVIDADE': ['Reunião Pedagógica', 'Capacitação', 'Planejamento', 'Correção', 'Outros'],
-    'HORAS': [45, 60, 35, 40, 30]
-})
-
-fig_nao_regencia = px.bar(
-    dados_nao_regencia,
-    x='TIPO_ATIVIDADE',
-    y='HORAS',
-    color='HORAS',
-    title='Distribuição de Horas por Tipo de Atividade'
-)
-st.plotly_chart(fig_nao_regencia, use_container_width=True)
-
-# 📊 GRÁFICO 4: Ocupação por Turno
-st.subheader("📅 Ocupação por Turno vs Metas")
-
-dados_turno = pd.DataFrame({
-    'TURNO': ['MANHÃ', 'TARDE', 'NOITE'],
-    'OCUPACAO': [78.27, 0, 0]  # Baseado no seu RESUMO
-})
-
-fig_turno = go.Figure()
-fig_turno.add_trace(go.Bar(
-    x=dados_turno['TURNO'],
-    y=dados_turno['OCUPACAO'],
-    name='Ocupação Real',
-    marker_color='steelblue'
-))
-fig_turno.add_hline(y=70, line_dash="dash", line_color="orange", annotation_text="Meta Mínima (70%)")
-fig_turno.add_hline(y=85, line_dash="dash", line_color="green", annotation_text="Meta Ideal (85%)")
-fig_turno.update_layout(height=400, title='Ocupação por Turno', yaxis_range=[0, 100])
-st.plotly_chart(fig_turno, use_container_width=True)
-
-# 📋 TABELA DE TURMAS
-st.subheader("🎓 Turmas Ativas")
-
-dados_turmas = pd.DataFrame({
-    'CÓDIGO': ['QUA20502026U001', 'QUA04382026U003', 'APR01302026U006'],
-    'NOME': ['Qualificação Básica em IA', 'Programador Full Stack', 'Desenvolvedor de Soluções TI'],
-    'TURNO': ['EAD', 'MANHÃ', 'MANHÃ'],
-    'MODALIDADE': ['EAD', 'PRESENCIAL', 'PRESENCIAL'],
-    'VAGAS': ['364/500', '22/22', '15/15'],
-    'STATUS': ['Em andamento', 'Em andamento', 'Em andamento']
-})
-
-st.dataframe(dados_turmas, use_container_width=True)
-
-# 💾 EXPORTAÇÃO DE DADOS
-st.sidebar.subheader("💾 Exportar Dados")
-if st.sidebar.button("📥 Baixar Relatório em CSV"):
-    csv = dados_ocupacao.to_csv(index=False).encode('utf-8')
-    st.sidebar.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name='relatorio_ocupacao.csv',
-        mime='text/csv'
-    )
-
-# Rodapé
-st.markdown("---")
-st.caption(f"Dashboard gerado automaticamente | Última atualização: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+with colD:
+    st.markdown("#### Status dos Instrutores")
+    # Entender gargalos de RH (Ativos vs Férias/World Skills)
+    status_counts = df_instrutores['OBSERVAÇÃO'].fillna('SEM OBSERVAÇÃO').value_counts().reset_index()
+    status_counts.columns = ['Status/Observação', 'Quantidade']
+    fig_status = px.bar(status_counts, y='Status/Observação', x='Quantidade', orientation='h',
+                        color='Status/Observação')
+    st.plotly_chart(fig_status, use_container_width=True)
