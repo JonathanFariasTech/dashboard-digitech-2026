@@ -55,19 +55,17 @@ def extrair_mes_automatico(file):
 # ==========================================
 st.sidebar.title("🔐 Acesso Administrativo")
 
-# Lógica de Login com st.form (Permite submeter com a tecla ENTER)
+# Lógica de Login com st.form
 if not st.session_state['admin_logado']:
     with st.sidebar.form("form_login"):
         st.markdown("🔒 **Faça login para gerir os dados**")
         senha = st.text_input("Palavra-passe:", type="password")
-        
-        # O botão de submissão do formulário
         btn_entrar = st.form_submit_button("Entrar 🚀", use_container_width=True)
         
         if btn_entrar:
-            if senha == "admin123": # <-- COLOQUE A SUA SENHA AQUI
+            if senha == "admin123": 
                 st.session_state['admin_logado'] = True
-                st.rerun() # Recarrega a página instantaneamente
+                st.rerun() 
             else:
                 st.error("❌ Palavra-passe incorreta!")
 else:
@@ -78,11 +76,10 @@ else:
 
 st.sidebar.divider()
 
-# Listagem dos ficheiros já existentes
 arquivos_salvos = sorted([f for f in os.listdir(PASTA_HISTORICO) if f.endswith('.xlsx')])
 
 # ==========================================
-# 3.1. FERRAMENTAS DO ADMIN (SÓ SE ESTIVER LOGADO)
+# 3.1. FERRAMENTAS DO ADMIN 
 # ==========================================
 if st.session_state['admin_logado']:
     st.sidebar.title("🛠️ Ferramentas Admin")
@@ -172,7 +169,7 @@ def compilar_historico(arquivos):
             
             dados_linha_tempo.append({"Mês": mes, "Horas Não Regência": total_nr, "Ocupação Média (%)": ocupacao_media})
         except Exception:
-            pass # IGNORA O ERRO DE ARQUIVOS CORROMPIDOS E CONTINUA LENDO OS OUTROS
+            pass 
     return pd.DataFrame(dados_linha_tempo)
 
 # ==========================================
@@ -233,21 +230,37 @@ else:
         col5.metric("Faltas Registadas", len(dados['faltas']))
         
         st.divider()
-        st.markdown("### 🎯 Execução da Carga Horária (Meta vs Realizado)")
+        
+        # --- NOVO BLOCO: CÁLCULO DE HORA-ALUNO (MACRO) ---
+        st.markdown("### 🎯 Execução de Hora-Aluno (HA) - Macro")
+        st.caption("Cálculo: Carga Horária da Disciplina × Número de Alunos Matriculados na Turma.")
+        
         df_disc = dados['disc'].copy()
         df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
-        carga_total = df_disc['CARGA_HORARIA'].sum()
-        carga_cumprida = df_disc[df_disc['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['CARGA_HORARIA'].sum()
-        perc_conclusao = (carga_cumprida / carga_total) * 100 if carga_total > 0 else 0
+        
+        # Cruzamento das Disciplinas com o número de alunos (Vagas Ocupadas) das Turmas
+        df_turmas_resumo = df_turmas_f[['ID_TURMA', 'VAGAS_OCUPADAS']].copy()
+        
+        # Utilizamos 'inner' para garantir que, se um turno for filtrado, só calculamos a HA das turmas desse turno
+        df_ha = pd.merge(df_disc, df_turmas_resumo, on='ID_TURMA', how='inner')
+        
+        # O cálculo mágico da Hora-Aluno
+        df_ha['HA_TOTAL'] = df_ha['CARGA_HORARIA'] * df_ha['VAGAS_OCUPADAS']
+        
+        ha_meta = df_ha['HA_TOTAL'].sum()
+        ha_cumprida = df_ha[df_ha['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['HA_TOTAL'].sum()
+        perc_ha = (ha_cumprida / ha_meta) * 100 if ha_meta > 0 else 0
         
         col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("📚 Carga Horária Total", f"{carga_total}h")
-        col_m2.metric("✅ Horas Cumpridas", f"{carga_cumprida}h")
-        col_m3.metric("🚀 Progresso da Meta", f"{perc_conclusao:.1f}%")
-        st.progress(min(int(perc_conclusao), 100))
+        # Formatação de números grandes para melhor leitura (ex: 12.000 HA)
+        col_m1.metric("📚 Meta (Hora-Aluno Total)", f"{ha_meta:,.0f} HA".replace(',', '.'))
+        col_m2.metric("✅ Realizado (Hora-Aluno)", f"{ha_cumprida:,.0f} HA".replace(',', '.'))
+        col_m3.metric("🚀 Progresso da Meta", f"{perc_ha:.1f}%")
+        
+        st.progress(min(int(perc_ha), 100))
         
         st.divider()
-        st.markdown("#### Detalhamento de Execução das Disciplinas")
+        st.markdown("#### Status de Execução das Disciplinas")
         status_disc = df_disc['STATUS'].value_counts().reset_index()
         status_disc.columns = ['Status', 'Quantidade']
         st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, color_discrete_sequence=px.colors.sequential.Teal), use_container_width=True)
