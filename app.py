@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-import json # <-- Nova biblioteca nativa para guardar configurações
+import json 
 from github import Github 
 
 # ==========================================
@@ -12,7 +12,7 @@ st.set_page_config(page_title="Dashboard Digitech", layout="wide", page_icon="�
 
 PASTA_HISTORICO = "historico_dados"
 os.makedirs(PASTA_HISTORICO, exist_ok=True)
-ARQUIVO_META = os.path.join(PASTA_HISTORICO, "metas_ha.json") # Ficheiro que vai guardar as metas manuais
+ARQUIVO_META = os.path.join(PASTA_HISTORICO, "metas_ha.json") 
 
 MESES_PT = {1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun', 
             7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'}
@@ -71,7 +71,6 @@ def salvar_no_github(caminho_arquivo_local, nome_arquivo_github, file_buffer):
     except Exception as e:
         return False, f"Erro na sincronização: {e}"
 
-# --- FUNÇÕES PARA GERIR AS METAS MANUAIS ---
 def carregar_metas():
     if os.path.exists(ARQUIVO_META):
         try:
@@ -129,21 +128,19 @@ st.sidebar.divider()
 
 arquivos_salvos = sorted([f for f in os.listdir(PASTA_HISTORICO) if f.endswith('.xlsx')])
 
-# --- SELEÇÃO DE MÊS (MOVIDO PARA CIMA PARA SER USADO NA FERRAMENTA DE META) ---
+# ==========================================
+# 3.1. FERRAMENTAS DO ADMIN E NAVEGAÇÃO
+# ==========================================
 st.sidebar.title("🧭 Navegação Visual")
-mes_analise = st.sidebar.selectbox("📅 Mês de Análise:", [f.replace(".xlsx", "") for f in arquivos_salvos], index=max(0, len(arquivos_salvos)-1))
+mes_analise = st.sidebar.selectbox("📅 Mês de Análise:", [f.replace(".xlsx", "") for f in arquivos_salvos], index=max(0, len(arquivos_salvos)-1)) if arquivos_salvos else None
 
-# ==========================================
-# 3.1. FERRAMENTAS DO ADMIN 
-# ==========================================
 if st.session_state['admin_logado']:
     st.sidebar.title("🛠️ Ferramentas Admin")
     
-    # FERRAMENTA DE METAS MANUAIS
     with st.sidebar.expander("🎯 Ajustar Meta Hora-Aluno", expanded=False):
         st.markdown(f"**A editar a meta de:** {mes_analise if mes_analise else 'Nenhum mês'}")
         metas_salvas = carregar_metas()
-        meta_atual = metas_salvas.get(mes_analise, 0)
+        meta_atual = metas_salvas.get(mes_analise, 0) if mes_analise else 0
         
         nova_meta = st.number_input(
             "Definir Meta Manual (0 = Automático):", 
@@ -296,7 +293,7 @@ else:
         col5.metric("Faltas Registadas", len(dados['faltas']))
         
         st.divider()
-        st.markdown("### 🎯 Execução de Hora-Aluno (HA)")
+        st.markdown("### 🎯 Execução de Hora-Aluno (HA) - Visão Macro")
         
         df_disc = dados['disc'].copy()
         df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
@@ -327,7 +324,53 @@ else:
         st.progress(min(int(perc_ha), 100))
         
         st.divider()
-        st.markdown("#### Status de Execução das Disciplinas")
+        
+        # --- PROGRESSO DE CONCLUSÃO POR TURMA ---
+        st.markdown("### 🏁 Progresso de Conclusão por Turma")
+        st.caption("Acompanhamento individual de cada turma com base nas disciplinas concluídas.")
+        
+        df_ha_turma = df_ha.groupby('ID_TURMA').apply(
+            lambda x: pd.Series({
+                'HA_META': x['HA_TOTAL'].sum(),
+                'HA_REALIZADO': x[x['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['HA_TOTAL'].sum()
+            })
+        ).reset_index()
+        
+        df_ha_turma['PROGRESSO_%'] = (df_ha_turma['HA_REALIZADO'] / df_ha_turma['HA_META']) * 100
+        df_ha_turma['PROGRESSO_%'] = df_ha_turma['PROGRESSO_%'].fillna(0).round(1)
+        
+        if not df_ha_turma.empty:
+            fig_turmas = px.bar(
+                df_ha_turma.sort_values('PROGRESSO_%', ascending=True), 
+                x='PROGRESSO_%', 
+                y='ID_TURMA', 
+                orientation='h',
+                title='Ranking de Progresso por Turma (%)',
+                text='PROGRESSO_%',
+                color='PROGRESSO_%',
+                color_continuous_scale='Greens'
+            )
+            fig_turmas.update_layout(xaxis=dict(range=[0, 100]), yaxis_title="Código da Turma", xaxis_title="Conclusão (%)")
+            st.plotly_chart(fig_turmas, use_container_width=True)
+            
+            with st.expander("🔍 Ver detalhamento de disciplinas por turma"):
+                turma_selecionada = st.selectbox("Selecione uma turma para analisar:", df_ha_turma['ID_TURMA'].unique())
+                df_detalhe_turma = df_ha[df_ha['ID_TURMA'] == turma_selecionada][['NOME_DISCIPLINA', 'CARGA_HORARIA', 'STATUS', 'HA_TOTAL']]
+                
+                def pintar_status(val):
+                    cor = '#d4edda' if str(val).strip().upper() in ['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'] else '#f8d7da'
+                    return f'background-color: {cor}; color: black'
+                
+                # Usa style.map (versões mais recentes do pandas) ou style.applymap (versões antigas)
+                try:
+                    st.dataframe(df_detalhe_turma.style.map(pintar_status, subset=['STATUS']), use_container_width=True, hide_index=True)
+                except AttributeError:
+                    st.dataframe(df_detalhe_turma.style.applymap(pintar_status, subset=['STATUS']), use_container_width=True, hide_index=True)
+        else:
+            st.info("Não há dados suficientes para cruzar turmas e disciplinas neste mês.")
+
+        st.divider()
+        st.markdown("#### Status de Execução das Disciplinas (Geral)")
         status_disc = df_disc['STATUS'].value_counts().reset_index()
         status_disc.columns = ['Status', 'Quantidade']
         st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, color_discrete_sequence=px.colors.sequential.Teal), use_container_width=True)
