@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
+from github import Github # <-- NOVA BIBLIOTECA AQUI
 
 # ==========================================
 # 1. CONFIGURAÇÃO E INICIALIZAÇÃO
@@ -19,12 +20,11 @@ ABAS_OBRIGATORIAS = [
     "DISCIPLINAS", "AMBIENTES", "FALTAS", "PARÂMETROS"
 ]
 
-# Inicializa o controlo de sessão para o Login
 if 'admin_logado' not in st.session_state:
     st.session_state['admin_logado'] = False
 
 # ==========================================
-# 2. FUNÇÕES DE VALIDAÇÃO
+# 2. FUNÇÕES DE VALIDAÇÃO E GITHUB
 # ==========================================
 def validar_planilha(file):
     try:
@@ -32,10 +32,10 @@ def validar_planilha(file):
         abas_arquivo = xls.sheet_names
         abas_faltantes = [aba for aba in ABAS_OBRIGATORIAS if aba not in abas_arquivo]
         if abas_faltantes:
-            return False, f"Planilha fora do padrão! Faltam as seguintes abas: {', '.join(abas_faltantes)}"
+            return False, f"Faltam as abas: {', '.join(abas_faltantes)}"
         return True, "Planilha validada com sucesso."
     except Exception as e:
-        return False, f"Erro ao ler o ficheiro. Certifique-se de que é um Excel válido. Detalhe: {e}"
+        return False, f"Erro ao ler o ficheiro: {e}"
 
 def extrair_mes_automatico(file):
     try:
@@ -50,12 +50,33 @@ def extrair_mes_automatico(file):
         return None
     return None
 
+# --- NOVA FUNÇÃO PARA PERSISTIR DADOS NO GITHUB ---
+def salvar_no_github(caminho_arquivo_local, nome_arquivo_github, file_buffer):
+    try:
+        if "GITHUB_TOKEN" in st.secrets and "GITHUB_REPO" in st.secrets:
+            g = Github(st.secrets["GITHUB_TOKEN"])
+            repo = g.get_repo(st.secrets["GITHUB_REPO"])
+            caminho_no_repo = f"{PASTA_HISTORICO}/{nome_arquivo_github}"
+            mensagem_commit = f"Upload automático via Dashboard: {nome_arquivo_github}"
+            
+            # Tenta verificar se o ficheiro já existe para o atualizar
+            try:
+                contents = repo.get_contents(caminho_no_repo)
+                repo.update_file(contents.path, mensagem_commit, file_buffer.getvalue(), contents.sha)
+            except Exception:
+                # Se não existir, cria um novo
+                repo.create_file(caminho_no_repo, mensagem_commit, file_buffer.getvalue())
+            return True, "Sincronizado com a Nuvem!"
+        else:
+            return False, "Faltam os Secrets do GitHub no Streamlit."
+    except Exception as e:
+        return False, f"Erro na sincronização: {e}"
+
 # ==========================================
 # 3. BARRA LATERAL: LOGIN COM FORMULÁRIO
 # ==========================================
 st.sidebar.title("🔐 Acesso Administrativo")
 
-# Lógica de Login com st.form
 if not st.session_state['admin_logado']:
     with st.sidebar.form("form_login"):
         st.markdown("🔒 **Faça login para gerir os dados**")
@@ -79,7 +100,7 @@ st.sidebar.divider()
 arquivos_salvos = sorted([f for f in os.listdir(PASTA_HISTORICO) if f.endswith('.xlsx')])
 
 # ==========================================
-# 3.1. FERRAMENTAS DO ADMIN 
+# 3.1. FERRAMENTAS DO ADMIN (COM INTEGRAÇÃO GITHUB)
 # ==========================================
 if st.session_state['admin_logado']:
     st.sidebar.title("🛠️ Ferramentas Admin")
@@ -94,7 +115,9 @@ if st.session_state['admin_logado']:
             else:
                 nome_mes_auto = extrair_mes_automatico(arquivo_carregado)
                 if nome_mes_auto:
-                    caminho_arquivo = os.path.join(PASTA_HISTORICO, f"{nome_mes_auto}.xlsx")
+                    nome_arquivo_completo = f"{nome_mes_auto}.xlsx"
+                    caminho_arquivo = os.path.join(PASTA_HISTORICO, nome_arquivo_completo)
+                    
                     if os.path.exists(caminho_arquivo):
                         st.warning(f"⚠️ Atualizar dados de **{nome_mes_auto}**?")
                         texto_botao = "🔄 Sobrescrever Histórico"
@@ -103,18 +126,28 @@ if st.session_state['admin_logado']:
                         texto_botao = "💾 Salvar Novo Mês"
                         
                     if st.button(texto_botao, use_container_width=True):
-                        arquivo_carregado.seek(0)
-                        with open(caminho_arquivo, "wb") as f:
-                            f.write(arquivo_carregado.getbuffer())
-                        st.cache_data.clear()
-                        st.toast(f"Mês {nome_mes_auto} guardado!", icon="✅")
+                        with st.spinner("Salvando e Sincronizando com a Nuvem... ☁️"):
+                            # 1. Salva localmente (para o dashboard ler na hora)
+                            arquivo_carregado.seek(0)
+                            with open(caminho_arquivo, "wb") as f:
+                                f.write(arquivo_carregado.getbuffer())
+                            
+                            # 2. Envia para o GitHub (Para persistir para sempre)
+                            sucesso_gh, msg_gh = salvar_no_github(caminho_arquivo, nome_arquivo_completo, arquivo_carregado)
+                            
+                            st.cache_data.clear()
+                            
+                            if sucesso_gh:
+                                st.toast(f"Mês {nome_mes_auto} guardado e protegido! ✅", icon="✅")
+                            else:
+                                st.error(f"Salvo localmente, mas erro na nuvem: {msg_gh}")
                         st.rerun()
                 else:
                     st.error("Não foi possível detetar o mês automaticamente.")
                     
     if arquivos_salvos:
-        with st.sidebar.expander("🗑️ Remover Mês do Sistema", expanded=False):
-            st.warning("Atenção: Esta ação não pode ser desfeita.")
+        with st.sidebar.expander("🗑️ Remover Mês (Apenas Local)", expanded=False):
+            st.warning("Remove apenas a visualização temporária atual.")
             mes_remover = st.selectbox("Selecione o mês para excluir:", [f.replace(".xlsx", "") for f in arquivos_salvos])
             if st.button("🚨 Confirmar Exclusão", use_container_width=True):
                 caminho_remover = os.path.join(PASTA_HISTORICO, f"{mes_remover}.xlsx")
@@ -127,8 +160,10 @@ if st.session_state['admin_logado']:
     st.sidebar.divider()
 
 # ==========================================
-# 4. VERIFICAÇÃO DE HISTÓRICO EXISTENTE
+# O RESTO DO CÓDIGO PERMANECE EXATAMENTE IGUAL
+# (Secções 4, 5, 6 e 7 de visualização de dados)
 # ==========================================
+
 if not arquivos_salvos:
     st.title("📊 Painel de Desempenho 360º - Digitech")
     if st.session_state['admin_logado']:
@@ -137,9 +172,6 @@ if not arquivos_salvos:
         st.warning("Nenhum dado disponível. Aguarde o Administrador fazer o upload da planilha atual.")
     st.stop()
 
-# ==========================================
-# 5. CARREGAMENTO DOS DADOS (CACHE)
-# ==========================================
 @st.cache_data
 def load_data(file_path):
     xls = pd.ExcelFile(file_path)
@@ -172,27 +204,15 @@ def compilar_historico(arquivos):
             pass 
     return pd.DataFrame(dados_linha_tempo)
 
-# ==========================================
-# 6. MENU LATERAL: NAVEGAÇÃO PÚBLICA
-# ==========================================
 st.sidebar.title("🧭 Navegação Visual")
-
 mes_analise = st.sidebar.selectbox("📅 Mês de Análise:", [f.replace(".xlsx", "") for f in arquivos_salvos], index=len(arquivos_salvos)-1)
 caminho_selecionado = os.path.join(PASTA_HISTORICO, f"{mes_analise}.xlsx")
 dados = load_data(caminho_selecionado)
 
-pagina_selecionada = st.sidebar.radio(
-    "Escolha o Painel:",
-    ["🌐 Visão 360º", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes", "📈 Evolução Histórica"]
-)
-
+pagina_selecionada = st.sidebar.radio("Escolha o Painel:", ["🌐 Visão 360º", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes", "📈 Evolução Histórica"])
 st.sidebar.divider()
 lista_turnos = ["Todos"] + list(dados['turmas']['TURNO'].dropna().unique())
 turno_selecionado = st.sidebar.selectbox("Filtro de Turno:", lista_turnos)
-
-# ==========================================
-# 7. ROTEAMENTO DAS PÁGINAS E GRÁFICOS
-# ==========================================
 
 if pagina_selecionada == "📈 Evolução Histórica":
     st.title("📈 Evolução e Tendências (Comparativo Mensal)")
@@ -210,7 +230,6 @@ if pagina_selecionada == "📈 Evolução Histórica":
         st.dataframe(df_historico, use_container_width=True, hide_index=True)
     else:
         st.warning("⚠️ É necessário pelo menos 2 meses arquivados para visualizar tendências.")
-
 else:
     if turno_selecionado != "Todos":
         df_turmas_f = dados['turmas'][dados['turmas']['TURNO'] == turno_selecionado]
@@ -230,21 +249,13 @@ else:
         col5.metric("Faltas Registadas", len(dados['faltas']))
         
         st.divider()
-        
-        # --- NOVO BLOCO: CÁLCULO DE HORA-ALUNO (MACRO) ---
         st.markdown("### 🎯 Execução de Hora-Aluno (HA) - Macro")
         st.caption("Cálculo: Carga Horária da Disciplina × Número de Alunos Matriculados na Turma.")
         
         df_disc = dados['disc'].copy()
         df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
-        
-        # Cruzamento das Disciplinas com o número de alunos (Vagas Ocupadas) das Turmas
         df_turmas_resumo = df_turmas_f[['ID_TURMA', 'VAGAS_OCUPADAS']].copy()
-        
-        # Utilizamos 'inner' para garantir que, se um turno for filtrado, só calculamos a HA das turmas desse turno
         df_ha = pd.merge(df_disc, df_turmas_resumo, on='ID_TURMA', how='inner')
-        
-        # O cálculo mágico da Hora-Aluno
         df_ha['HA_TOTAL'] = df_ha['CARGA_HORARIA'] * df_ha['VAGAS_OCUPADAS']
         
         ha_meta = df_ha['HA_TOTAL'].sum()
@@ -252,11 +263,9 @@ else:
         perc_ha = (ha_cumprida / ha_meta) * 100 if ha_meta > 0 else 0
         
         col_m1, col_m2, col_m3 = st.columns(3)
-        # Formatação de números grandes para melhor leitura (ex: 12.000 HA)
         col_m1.metric("📚 Meta (Hora-Aluno Total)", f"{ha_meta:,.0f} HA".replace(',', '.'))
         col_m2.metric("✅ Realizado (Hora-Aluno)", f"{ha_cumprida:,.0f} HA".replace(',', '.'))
         col_m3.metric("🚀 Progresso da Meta", f"{perc_ha:.1f}%")
-        
         st.progress(min(int(perc_ha), 100))
         
         st.divider()
@@ -268,7 +277,6 @@ else:
     elif pagina_selecionada == "👥 Análise de Docentes (RH)":
         st.title(f"👥 Docentes e Não Regência - {mes_analise[5:]}")
         df_nr_det = pd.merge(dados['nr'], dados['inst'][['ID', 'NOME_COMPLETO']], left_on='ID_INSTRUTOR', right_on='ID', how='left')
-        
         if not df_nr_det.empty:
             df_horas_inst = df_nr_det.groupby('NOME_COMPLETO')['HORAS_NAO_REGENCIA'].sum().reset_index().sort_values('HORAS_NAO_REGENCIA')
             st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência", color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges'), use_container_width=True)
