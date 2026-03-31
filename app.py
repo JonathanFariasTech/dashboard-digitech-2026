@@ -276,6 +276,10 @@ def obter_coluna_nome_turma(df_turmas):
 
 col_nome = obter_coluna_nome_turma(dados['turmas'])
 
+# ==========================================
+# 6. RENDERIZAÇÃO DOS PAINÉIS
+# ==========================================
+
 if pagina_selecionada == "📈 Evolução Histórica":
     st.title("📈 Evolução e Tendências (Comparativo Mensal)")
     df_historico = compilar_historico(arquivos_salvos)
@@ -335,7 +339,6 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
         df_faltas = dados['faltas'].copy()
         
         if not df_faltas.empty:
-            # --- ATUALIZADO: Suporte Inteligente à nova coluna DATA_FALTA ---
             coluna_data = 'DATA_FALTA' if 'DATA_FALTA' in df_faltas.columns else ('DATA' if 'DATA' in df_faltas.columns else None)
             
             if coluna_data:
@@ -379,6 +382,7 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
             st.success("🎉 Nenhuma falta registada neste período!")
 
 else:
+    # Filtro Global de Turno para as páginas abaixo
     if turno_selecionado != "Todos":
         df_turmas_f = dados['turmas'][dados['turmas']['TURNO'] == turno_selecionado]
         df_ocupacao_f = dados['ocupacao'][dados['ocupacao']['TURNO'] == turno_selecionado] if 'TURNO' in dados['ocupacao'].columns else dados['ocupacao']
@@ -488,7 +492,7 @@ else:
             df_horas_inst = df_nr_det.groupby('NOME_COMPLETO')['HORAS_NAO_REGENCIA'].sum().reset_index().sort_values('HORAS_NAO_REGENCIA')
             st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência", color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges'), use_container_width=True)
             
-            # --- ATUALIZADO: Suporte às novas colunas DATA_INICIO e DATA_FIM ---
+            # --- Suporte às colunas de Data ---
             if 'DATA_INICIO' in df_nr_det.columns:
                 df_nr_det['DATA_INICIO'] = pd.to_datetime(df_nr_det['DATA_INICIO'], errors='coerce').dt.strftime('%d/%m/%Y')
             if 'DATA_FIM' in df_nr_det.columns:
@@ -505,8 +509,88 @@ else:
             st.info("Sem dados de Não Regência para este mês.")
 
     elif pagina_selecionada == "🏢 Ocupação e Ambientes":
-        st.title(f"🏢 Uso de Laboratórios e Salas - {mes_analise[5:]}")
+        st.title(f"🏢 Uso de Laboratórios e Salas - {mes_analise[5:] if mes_analise else ''}")
+        
         if not df_ocupacao_f.empty:
-            df_amb_uso = df_ocupacao_f.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
-            df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
-            st.plotly_chart(px.bar(df_amb_uso.sort_values('PERCENTUAL_OCUPACAO'), x='PERCENTUAL_OCUPACAO', y='AMBIENTE', orientation='h', title="Ocupação Média (%)", color='PERCENTUAL_OCUPACAO', color_continuous_scale='Blues'), use_container_width=True)
+            if 'DATA' in df_ocupacao_f.columns:
+                df_ocupacao_f['DATA'] = pd.to_datetime(df_ocupacao_f['DATA'], errors='coerce')
+            
+            tipo_grafico = st.selectbox(
+                "📊 Selecione a visão de análise de ocupação:",
+                [
+                    "Visão Geral (Média por Ambiente)", 
+                    "Evolução Diária (Linha do Tempo)", 
+                    "Mapa de Calor (Ambiente vs. Dia)"
+                ]
+            )
+            
+            st.divider()
+            
+            if tipo_grafico == "Visão Geral (Média por Ambiente)":
+                st.subheader("Ocupação Média Acumulada")
+                df_amb_uso = df_ocupacao_f.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
+                df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
+                
+                fig = px.bar(
+                    df_amb_uso.sort_values('PERCENTUAL_OCUPACAO'), 
+                    x='PERCENTUAL_OCUPACAO', 
+                    y='AMBIENTE', 
+                    orientation='h', 
+                    color='PERCENTUAL_OCUPACAO', 
+                    color_continuous_scale='Blues',
+                    text_auto='.1f'
+                )
+                fig.update_layout(xaxis_title="Ocupação Média (%)", yaxis_title="")
+                st.plotly_chart(fig, use_container_width=True)
+                
+            elif tipo_grafico == "Evolução Diária (Linha do Tempo)":
+                st.subheader("Evolução da Ocupação ao Longo do Mês")
+                if 'DATA' in df_ocupacao_f.columns:
+                    df_diario = df_ocupacao_f.groupby('DATA')['PERCENTUAL_OCUPACAO'].mean().reset_index()
+                    df_diario['PERCENTUAL_OCUPACAO'] *= 100
+                    df_diario = df_diario.dropna(subset=['DATA']).sort_values('DATA')
+                    
+                    fig = px.line(
+                        df_diario, 
+                        x='DATA', 
+                        y='PERCENTUAL_OCUPACAO', 
+                        markers=True,
+                        line_shape="spline"
+                    )
+                    fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8))
+                    fig.update_yaxes(range=[0, 100], title="Ocupação Média (%)")
+                    fig.update_xaxes(title="Data")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("⚠️ A coluna 'DATA' não foi encontrada na planilha de Ocupação.")
+                    
+            elif tipo_grafico == "Mapa de Calor (Ambiente vs. Dia)":
+                st.subheader("🔥 Mapa de Calor Diário por Ambiente")
+                st.caption("Cores mais escuras indicam maior nível de lotação.")
+                
+                if 'DATA' in df_ocupacao_f.columns:
+                    df_heat = df_ocupacao_f.copy()
+                    df_heat['DIA_FORMATADO'] = df_heat['DATA'].dt.strftime('%d/%m')
+                    
+                    pivot_heat = df_heat.pivot_table(
+                        index='AMBIENTE', 
+                        columns='DIA_FORMATADO', 
+                        values='PERCENTUAL_OCUPACAO', 
+                        aggfunc='mean'
+                    )
+                    
+                    pivot_heat = pivot_heat * 100
+                    
+                    fig = px.imshow(
+                        pivot_heat, 
+                        text_auto=".0f", 
+                        aspect="auto",
+                        color_continuous_scale='YlOrRd', 
+                        labels=dict(x="Dia", y="Ambiente", color="Ocupação (%)")
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("⚠️ A coluna 'DATA' não foi encontrada na planilha de Ocupação.")
+                    
+        else:
+            st.info("Sem dados de Ocupação para este mês.")
