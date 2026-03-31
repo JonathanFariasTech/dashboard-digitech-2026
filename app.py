@@ -297,12 +297,10 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
     st.title(f"📑 Relatório Gerencial Pormenorizado - {mes_analise[5:] if mes_analise else ''}")
     st.markdown("Auditoria de dados cruzados e exportação de listagens para o Excel.")
     
-    tab1, tab2 = st.tabs(["📚 Raio-X das Disciplinas", "⚠️ Registo de Faltas"])
+    tab1, tab2 = st.tabs(["📚 Raio-X das Disciplinas", "⚠️ Análise de Faltas"])
     
     with tab1:
         st.subheader("Situação Detalhada das Disciplinas e Turmas")
-        
-        # Cria a base com o nome da turma para os relatórios
         df_turmas_resumo = dados['turmas'][['ID_TURMA', 'TURNO', 'VAGAS_OCUPADAS']].copy()
         if col_nome != 'ID_TURMA':
             df_turmas_resumo[col_nome] = dados['turmas'][col_nome]
@@ -313,7 +311,6 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
         df_relatorio_disc = pd.merge(dados['disc'], df_turmas_resumo, on='ID_TURMA', how='inner')
         df_relatorio_disc['HORA_ALUNO_TOTAL'] = df_relatorio_disc['CARGA_HORARIA'] * df_relatorio_disc['VAGAS_OCUPADAS']
         
-        # Reorganizar colunas para o TURMA_EXIBICAO ficar no início
         cols = ['TURMA_EXIBICAO'] + [c for c in df_relatorio_disc.columns if c != 'TURMA_EXIBICAO']
         df_relatorio_disc = df_relatorio_disc[cols]
         
@@ -334,10 +331,37 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
         )
 
     with tab2:
-        st.subheader("Relatório de Ocorrências (Faltas)")
+        st.subheader("Relatório e Tendência de Ocorrências (Faltas)")
         df_faltas = dados['faltas'].copy()
         
         if not df_faltas.empty:
+            # --- NOVO: GRÁFICO DE TENDÊNCIA DE FALTAS ---
+            if 'DATA' in df_faltas.columns:
+                # Prepara os dados para o gráfico de linha (agrupando por dia)
+                df_tendencia = df_faltas.copy()
+                df_tendencia['DATA_DATETIME'] = pd.to_datetime(df_tendencia['DATA'], errors='coerce')
+                df_tendencia = df_tendencia.dropna(subset=['DATA_DATETIME'])
+                
+                # Conta quantas linhas (faltas) ocorreram por dia
+                df_tendencia_grupo = df_tendencia.groupby('DATA_DATETIME').size().reset_index(name='QTD_FALTAS')
+                df_tendencia_grupo = df_tendencia_grupo.sort_values('DATA_DATETIME')
+                
+                if not df_tendencia_grupo.empty:
+                    fig_faltas = px.line(
+                        df_tendencia_grupo, 
+                        x='DATA_DATETIME', 
+                        y='QTD_FALTAS', 
+                        markers=True, 
+                        title="📉 Tendência Diária de Ausências",
+                        labels={'DATA_DATETIME': 'Data da Ocorrência', 'QTD_FALTAS': 'Número de Faltas'},
+                        line_shape="spline" # Deixa a linha mais suave e bonita
+                    )
+                    fig_faltas.update_traces(line_color='#e63946', marker=dict(size=8)) # Cor vermelha (alerta)
+                    st.plotly_chart(fig_faltas, use_container_width=True)
+                    st.divider()
+
+            # --- TABELA ORIGINAL ---
+            st.markdown("**Listagem Detalhada:**")
             if 'DATA' in df_faltas.columns:
                 df_faltas['DATA'] = pd.to_datetime(df_faltas['DATA'], errors='coerce').dt.strftime('%d/%m/%Y')
             st.dataframe(df_faltas, use_container_width=True, hide_index=True)
@@ -377,7 +401,6 @@ else:
         df_disc = dados['disc'].copy()
         df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
         
-        # --- AQUI ESTÁ A LÓGICA DOS NOMES DAS TURMAS ---
         df_turmas_resumo = df_turmas_f[['ID_TURMA', 'VAGAS_OCUPADAS']].copy()
         if col_nome != 'ID_TURMA':
             df_turmas_resumo[col_nome] = df_turmas_f[col_nome]
@@ -412,7 +435,6 @@ else:
         st.markdown("### 🏁 Progresso de Conclusão por Turma")
         st.caption("Acompanhamento individual de cada turma com base nas disciplinas concluídas.")
         
-        # Agrupa pelo novo nome amigável
         df_ha_turma = df_ha.groupby('TURMA_EXIBICAO').apply(
             lambda x: pd.Series({
                 'HA_META': x['HA_TOTAL'].sum(),
@@ -427,7 +449,7 @@ else:
             fig_turmas = px.bar(
                 df_ha_turma.sort_values('PROGRESSO_%', ascending=True), 
                 x='PROGRESSO_%', 
-                y='TURMA_EXIBICAO', # <-- Agora usa o nome completo no gráfico!
+                y='TURMA_EXIBICAO', 
                 orientation='h',
                 title='Ranking de Progresso por Turma (%)',
                 text='PROGRESSO_%',
