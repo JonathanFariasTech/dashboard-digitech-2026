@@ -335,14 +335,15 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
         df_faltas = dados['faltas'].copy()
         
         if not df_faltas.empty:
-            # --- NOVO: GRÁFICO DE TENDÊNCIA DE FALTAS ---
-            if 'DATA' in df_faltas.columns:
-                # Prepara os dados para o gráfico de linha (agrupando por dia)
+            # --- ATUALIZADO: Suporte Inteligente à nova coluna DATA_FALTA ---
+            coluna_data = 'DATA_FALTA' if 'DATA_FALTA' in df_faltas.columns else ('DATA' if 'DATA' in df_faltas.columns else None)
+            
+            if coluna_data:
+                # Prepara os dados para o gráfico de linha
                 df_tendencia = df_faltas.copy()
-                df_tendencia['DATA_DATETIME'] = pd.to_datetime(df_tendencia['DATA'], errors='coerce')
+                df_tendencia['DATA_DATETIME'] = pd.to_datetime(df_tendencia[coluna_data], errors='coerce')
                 df_tendencia = df_tendencia.dropna(subset=['DATA_DATETIME'])
                 
-                # Conta quantas linhas (faltas) ocorreram por dia
                 df_tendencia_grupo = df_tendencia.groupby('DATA_DATETIME').size().reset_index(name='QTD_FALTAS')
                 df_tendencia_grupo = df_tendencia_grupo.sort_values('DATA_DATETIME')
                 
@@ -354,16 +355,16 @@ elif pagina_selecionada == "📑 Relatórios Detalhados":
                         markers=True, 
                         title="📉 Tendência Diária de Ausências",
                         labels={'DATA_DATETIME': 'Data da Ocorrência', 'QTD_FALTAS': 'Número de Faltas'},
-                        line_shape="spline" # Deixa a linha mais suave e bonita
+                        line_shape="spline" 
                     )
-                    fig_faltas.update_traces(line_color='#e63946', marker=dict(size=8)) # Cor vermelha (alerta)
+                    fig_faltas.update_traces(line_color='#e63946', marker=dict(size=8))
                     st.plotly_chart(fig_faltas, use_container_width=True)
                     st.divider()
 
-            # --- TABELA ORIGINAL ---
+            # --- TABELA DE FALTAS ---
             st.markdown("**Listagem Detalhada:**")
-            if 'DATA' in df_faltas.columns:
-                df_faltas['DATA'] = pd.to_datetime(df_faltas['DATA'], errors='coerce').dt.strftime('%d/%m/%Y')
+            if coluna_data:
+                df_faltas[coluna_data] = pd.to_datetime(df_faltas[coluna_data], errors='coerce').dt.strftime('%d/%m/%Y')
             st.dataframe(df_faltas, use_container_width=True, hide_index=True)
             
             csv_faltas = df_faltas.to_csv(index=False, sep=";").encode('utf-8-sig')
@@ -486,7 +487,20 @@ else:
         if not df_nr_det.empty:
             df_horas_inst = df_nr_det.groupby('NOME_COMPLETO')['HORAS_NAO_REGENCIA'].sum().reset_index().sort_values('HORAS_NAO_REGENCIA')
             st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência", color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges'), use_container_width=True)
-            st.dataframe(df_nr_det[['DATA', 'NOME_COMPLETO', 'TIPO_ATIVIDADE', 'HORAS_NAO_REGENCIA']], use_container_width=True, hide_index=True)
+            
+            # --- ATUALIZADO: Suporte às novas colunas DATA_INICIO e DATA_FIM ---
+            if 'DATA_INICIO' in df_nr_det.columns:
+                df_nr_det['DATA_INICIO'] = pd.to_datetime(df_nr_det['DATA_INICIO'], errors='coerce').dt.strftime('%d/%m/%Y')
+            if 'DATA_FIM' in df_nr_det.columns:
+                df_nr_det['DATA_FIM'] = pd.to_datetime(df_nr_det['DATA_FIM'], errors='coerce').dt.strftime('%d/%m/%Y')
+                
+            colunas_exibir = ['NOME_COMPLETO', 'TIPO_ATIVIDADE', 'HORAS_NAO_REGENCIA']
+            if 'DATA_INICIO' in df_nr_det.columns and 'DATA_FIM' in df_nr_det.columns:
+                colunas_exibir = ['DATA_INICIO', 'DATA_FIM'] + colunas_exibir
+            elif 'DATA' in df_nr_det.columns:
+                colunas_exibir = ['DATA'] + colunas_exibir
+                
+            st.dataframe(df_nr_det[colunas_exibir], use_container_width=True, hide_index=True)
         else:
             st.info("Sem dados de Não Regência para este mês.")
 
