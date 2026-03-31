@@ -253,10 +253,28 @@ def compilar_historico(arquivos):
 caminho_selecionado = os.path.join(PASTA_HISTORICO, f"{mes_analise}.xlsx")
 dados = load_data(caminho_selecionado)
 
-pagina_selecionada = st.sidebar.radio("Escolha o Painel:", ["🌐 Visão 360º", "👥 Análise de Docentes (RH)", "🏢 Ocupação e Ambientes", "📈 Evolução Histórica"])
+pagina_selecionada = st.sidebar.radio("Escolha o Painel:", [
+    "🌐 Visão 360º", 
+    "👥 Análise de Docentes (RH)", 
+    "🏢 Ocupação e Ambientes", 
+    "📈 Evolução Histórica",
+    "📑 Relatórios Detalhados"
+])
+
 st.sidebar.divider()
 lista_turnos = ["Todos"] + list(dados['turmas']['TURNO'].dropna().unique())
 turno_selecionado = st.sidebar.selectbox("Filtro de Turno:", lista_turnos)
+
+# ==========================================
+# FUNÇÃO AUXILIAR PARA CRIAR O NOME DA TURMA
+# ==========================================
+def obter_coluna_nome_turma(df_turmas):
+    if 'NOME_TURMA' in df_turmas.columns: return 'NOME_TURMA'
+    if 'CURSO' in df_turmas.columns: return 'CURSO'
+    if 'NOME' in df_turmas.columns: return 'NOME'
+    return 'ID_TURMA'
+
+col_nome = obter_coluna_nome_turma(dados['turmas'])
 
 if pagina_selecionada == "📈 Evolução Histórica":
     st.title("📈 Evolução e Tendências (Comparativo Mensal)")
@@ -274,6 +292,67 @@ if pagina_selecionada == "📈 Evolução Histórica":
         st.dataframe(df_historico, use_container_width=True, hide_index=True)
     else:
         st.warning("⚠️ É necessário pelo menos 2 meses arquivados para visualizar tendências.")
+
+elif pagina_selecionada == "📑 Relatórios Detalhados":
+    st.title(f"📑 Relatório Gerencial Pormenorizado - {mes_analise[5:] if mes_analise else ''}")
+    st.markdown("Auditoria de dados cruzados e exportação de listagens para o Excel.")
+    
+    tab1, tab2 = st.tabs(["📚 Raio-X das Disciplinas", "⚠️ Registo de Faltas"])
+    
+    with tab1:
+        st.subheader("Situação Detalhada das Disciplinas e Turmas")
+        
+        # Cria a base com o nome da turma para os relatórios
+        df_turmas_resumo = dados['turmas'][['ID_TURMA', 'TURNO', 'VAGAS_OCUPADAS']].copy()
+        if col_nome != 'ID_TURMA':
+            df_turmas_resumo[col_nome] = dados['turmas'][col_nome]
+            df_turmas_resumo['TURMA_EXIBICAO'] = df_turmas_resumo['ID_TURMA'].astype(str) + " - " + df_turmas_resumo[col_nome].astype(str)
+        else:
+            df_turmas_resumo['TURMA_EXIBICAO'] = "Turma " + df_turmas_resumo['ID_TURMA'].astype(str)
+            
+        df_relatorio_disc = pd.merge(dados['disc'], df_turmas_resumo, on='ID_TURMA', how='inner')
+        df_relatorio_disc['HORA_ALUNO_TOTAL'] = df_relatorio_disc['CARGA_HORARIA'] * df_relatorio_disc['VAGAS_OCUPADAS']
+        
+        # Reorganizar colunas para o TURMA_EXIBICAO ficar no início
+        cols = ['TURMA_EXIBICAO'] + [c for c in df_relatorio_disc.columns if c != 'TURMA_EXIBICAO']
+        df_relatorio_disc = df_relatorio_disc[cols]
+        
+        lista_status = df_relatorio_disc['STATUS'].dropna().unique()
+        filtro_status = st.multiselect("Filtrar por Status da Disciplina:", lista_status, default=lista_status)
+        
+        df_final = df_relatorio_disc[df_relatorio_disc['STATUS'].isin(filtro_status)]
+        
+        st.dataframe(df_final, use_container_width=True, hide_index=True)
+        
+        csv_disc = df_final.to_csv(index=False, sep=";").encode('utf-8-sig')
+        st.download_button(
+            label="📥 Exportar Dados Visíveis para Excel (CSV)", 
+            data=csv_disc, 
+            file_name=f"relatorio_disciplinas_{mes_analise.replace(' ', '_')}.csv", 
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    with tab2:
+        st.subheader("Relatório de Ocorrências (Faltas)")
+        df_faltas = dados['faltas'].copy()
+        
+        if not df_faltas.empty:
+            if 'DATA' in df_faltas.columns:
+                df_faltas['DATA'] = pd.to_datetime(df_faltas['DATA'], errors='coerce').dt.strftime('%d/%m/%Y')
+            st.dataframe(df_faltas, use_container_width=True, hide_index=True)
+            
+            csv_faltas = df_faltas.to_csv(index=False, sep=";").encode('utf-8-sig')
+            st.download_button(
+                label="📥 Exportar Registo de Faltas (CSV)", 
+                data=csv_faltas, 
+                file_name=f"relatorio_faltas_{mes_analise.replace(' ', '_')}.csv", 
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.success("🎉 Nenhuma falta registada neste período!")
+
 else:
     if turno_selecionado != "Todos":
         df_turmas_f = dados['turmas'][dados['turmas']['TURNO'] == turno_selecionado]
@@ -297,13 +376,19 @@ else:
         
         df_disc = dados['disc'].copy()
         df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
+        
+        # --- AQUI ESTÁ A LÓGICA DOS NOMES DAS TURMAS ---
         df_turmas_resumo = df_turmas_f[['ID_TURMA', 'VAGAS_OCUPADAS']].copy()
+        if col_nome != 'ID_TURMA':
+            df_turmas_resumo[col_nome] = df_turmas_f[col_nome]
+            df_turmas_resumo['TURMA_EXIBICAO'] = df_turmas_resumo['ID_TURMA'].astype(str) + " - " + df_turmas_resumo[col_nome].astype(str)
+        else:
+            df_turmas_resumo['TURMA_EXIBICAO'] = "Turma " + df_turmas_resumo['ID_TURMA'].astype(str)
+            
         df_ha = pd.merge(df_disc, df_turmas_resumo, on='ID_TURMA', how='inner')
         df_ha['HA_TOTAL'] = df_ha['CARGA_HORARIA'] * df_ha['VAGAS_OCUPADAS']
         
-        # --- LÓGICA DA META MANUAL VS AUTOMÁTICA ---
         ha_meta_planilha = df_ha['HA_TOTAL'].sum()
-        
         metas_config = carregar_metas()
         meta_manual = metas_config.get(mes_analise, 0)
         
@@ -324,12 +409,11 @@ else:
         st.progress(min(int(perc_ha), 100))
         
         st.divider()
-        
-        # --- PROGRESSO DE CONCLUSÃO POR TURMA ---
         st.markdown("### 🏁 Progresso de Conclusão por Turma")
         st.caption("Acompanhamento individual de cada turma com base nas disciplinas concluídas.")
         
-        df_ha_turma = df_ha.groupby('ID_TURMA').apply(
+        # Agrupa pelo novo nome amigável
+        df_ha_turma = df_ha.groupby('TURMA_EXIBICAO').apply(
             lambda x: pd.Series({
                 'HA_META': x['HA_TOTAL'].sum(),
                 'HA_REALIZADO': x[x['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['HA_TOTAL'].sum()
@@ -343,25 +427,24 @@ else:
             fig_turmas = px.bar(
                 df_ha_turma.sort_values('PROGRESSO_%', ascending=True), 
                 x='PROGRESSO_%', 
-                y='ID_TURMA', 
+                y='TURMA_EXIBICAO', # <-- Agora usa o nome completo no gráfico!
                 orientation='h',
                 title='Ranking de Progresso por Turma (%)',
                 text='PROGRESSO_%',
                 color='PROGRESSO_%',
                 color_continuous_scale='Greens'
             )
-            fig_turmas.update_layout(xaxis=dict(range=[0, 100]), yaxis_title="Código da Turma", xaxis_title="Conclusão (%)")
+            fig_turmas.update_layout(xaxis=dict(range=[0, 100]), yaxis_title="Turma / Curso", xaxis_title="Conclusão (%)")
             st.plotly_chart(fig_turmas, use_container_width=True)
             
             with st.expander("🔍 Ver detalhamento de disciplinas por turma"):
-                turma_selecionada = st.selectbox("Selecione uma turma para analisar:", df_ha_turma['ID_TURMA'].unique())
-                df_detalhe_turma = df_ha[df_ha['ID_TURMA'] == turma_selecionada][['NOME_DISCIPLINA', 'CARGA_HORARIA', 'STATUS', 'HA_TOTAL']]
+                turma_selecionada = st.selectbox("Selecione uma turma para analisar:", df_ha_turma['TURMA_EXIBICAO'].unique())
+                df_detalhe_turma = df_ha[df_ha['TURMA_EXIBICAO'] == turma_selecionada][['NOME_DISCIPLINA', 'CARGA_HORARIA', 'STATUS', 'HA_TOTAL']]
                 
                 def pintar_status(val):
                     cor = '#d4edda' if str(val).strip().upper() in ['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'] else '#f8d7da'
                     return f'background-color: {cor}; color: black'
                 
-                # Usa style.map (versões mais recentes do pandas) ou style.applymap (versões antigas)
                 try:
                     st.dataframe(df_detalhe_turma.style.map(pintar_status, subset=['STATUS']), use_container_width=True, hide_index=True)
                 except AttributeError:
