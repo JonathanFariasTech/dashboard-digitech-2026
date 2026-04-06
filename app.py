@@ -17,10 +17,16 @@ ARQUIVO_META = os.path.join(PASTA_HISTORICO, "metas_ha.json")
 MESES_PT = {1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun', 
             7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'}
 
-ABAS_OBRIGATORIAS = [
-    "TURMAS", "OCUPAÇÃO", "NÃO_REGÊNCIA", "INSTRUTORES", 
-    "DISCIPLINAS", "AMBIENTES", "FALTAS", "PARÂMETROS"
-]
+ABAS_OBRIGATORIAS = {
+    "TURMAS": ["ID_TURMA", "TURNO", "VAGAS_OCUPADAS", "STATUS"],
+    "OCUPAÇÃO": ["DATA", "AMBIENTE", "PERCENTUAL_OCUPACAO", "TURNO"],
+    "NÃO_REGÊNCIA": ["ID_INSTRUTOR", "HORAS_NAO_REGENCIA"],
+    "INSTRUTORES": ["ID", "NOME_COMPLETO"],
+    "DISCIPLINAS": ["ID_TURMA", "NOME_DISCIPLINA", "CARGA_HORARIA", "STATUS"],
+    "AMBIENTES": ["ID_AMBIENTE", "NOME_AMBIENTE", "CAPACIDADE", "VIRTUAL"],
+    "FALTAS": ["ID_ALUNO", "DATA_FALTA", "TIPO_FALTA"],
+    "PARÂMETROS": ["META_HA_AUTOMATICA"]
+}
 
 if 'admin_logado' not in st.session_state:
     st.session_state['admin_logado'] = False
@@ -35,9 +41,17 @@ def validar_planilha(file):
         abas_faltantes = [aba for aba in ABAS_OBRIGATORIAS if aba not in abas_arquivo]
         if abas_faltantes:
             return False, f"Faltam as abas: {', '.join(abas_faltantes)}"
+        
+        for aba, colunas_obrigatorias in ABAS_OBRIGATORIAS.items():
+            if aba in abas_arquivo:
+                df_temp = pd.read_excel(file, sheet_name=aba, nrows=1) # Ler apenas a primeira linha para obter os nomes das colunas
+                colunas_faltantes = [col for col in colunas_obrigatorias if col not in df_temp.columns]
+                if colunas_faltantes:
+                    return False, f"Na aba '{aba}', faltam as colunas: {', '.join(colunas_faltantes)}"
+        
         return True, "Planilha validada com sucesso."
     except Exception as e:
-        return False, f"Erro ao ler o ficheiro: {e}"
+        return False, f"Erro ao ler o ficheiro ou validar colunas: {e}"
 
 def extrair_mes_automatico(file):
     try:
@@ -68,8 +82,10 @@ def salvar_no_github(caminho_arquivo_local, nome_arquivo_github, file_buffer):
             return True, "Sincronizado com a Nuvem!"
         else:
             return False, "Faltam os Secrets do GitHub no Streamlit."
+    except KeyError:
+        return False, "Faltam os Secrets do GitHub no Streamlit (GITHUB_TOKEN ou GITHUB_REPO)."
     except Exception as e:
-        return False, f"Erro na sincronização: {e}"
+        return False, f"Erro na sincronização com o GitHub: {e}"
 
 def carregar_metas():
     if os.path.exists(ARQUIVO_META):
@@ -94,14 +110,20 @@ def salvar_metas_github(metas_dict):
             
             try:
                 contents = repo.get_contents(caminho_no_repo)
-                repo.update_file(contents.path, mensagem_commit, conteudo, contents.sha)
-            except:
-                repo.create_file(caminho_no_repo, mensagem_commit, conteudo)
+                repo.update_file(contents.path, mensagem_commit, conteudo, contents.s            except Exception as e_update:
+                # Se o arquivo não existe, cria. Se der outro erro, registra.
+                try:
+                    repo.create_file(caminho_no_repo, mensagem_commit, conteudo)
+                except Exception as e_create:
+                    st.error(f"Erro ao criar/atualizar metas no GitHub: {e_create}")
+                    return False
             return True
-    except Exception:
-        pass
-
-# ==========================================
+    except KeyError:
+        st.error("Faltam os Secrets do GitHub no Streamlit (GITHUB_TOKEN ou GITHUB_REPO).")
+        return False
+    except Exception as e:
+        st.error(f"Erro geral ao salvar metas no GitHub: {e}")
+        return False========================================
 # 3. BARRA LATERAL: LOGIN COM FORMULÁRIO
 # ==========================================
 st.sidebar.title("🔐 Acesso Administrativo")
@@ -113,9 +135,12 @@ if not st.session_state['admin_logado']:
         btn_entrar = st.form_submit_button("Entrar 🚀", use_container_width=True)
         
         if btn_entrar:
-            if senha == "admin123": 
+            if senha == st.secrets["ADMIN_PASSWORD"]: 
                 st.session_state['admin_logado'] = True
-                st.rerun() 
+                st.rerun() # Força a re-renderização para atualizar a UI após o login
+            elif "ADMIN_PASSWORD" not in st.secrets:
+                st.error("❌ Senha de administrador não configurada nos secrets do Streamlit.")
+            
             else:
                 st.error("❌ Palavra-passe incorreta!")
 else:
@@ -222,33 +247,64 @@ if not arquivos_salvos:
 # ==========================================
 @st.cache_data
 def load_data(file_path):
+    """Carrega todas as abas necessárias de uma planilha Excel com otimização de colunas."""
     xls = pd.ExcelFile(file_path)
-    return {
-        'turmas': pd.read_excel(xls, sheet_name="TURMAS"),
-        'ocupacao': pd.read_excel(xls, sheet_name="OCUPAÇÃO"),
-        'nr': pd.read_excel(xls, sheet_name="NÃO_REGÊNCIA"),
-        'inst': pd.read_excel(xls, sheet_name="INSTRUTORES"),
-        'disc': pd.read_excel(xls, sheet_name="DISCIPLINAS", skiprows=1),
-        'amb': pd.read_excel(xls, sheet_name="AMBIENTES"),
-        'faltas': pd.read_excel(xls, sheet_name="FALTAS"),
-        'param': pd.read_excel(xls, sheet_name="PARÂMETROS", skiprows=9)
+    
+    # Mapeamento de abas para colunas necessárias (otimização de memória)
+    config_abas = {
+        'turmas': ("TURMAS", None, 0),
+        'ocupacao': ("OCUPAÇÃO", None, 0),
+        'nr': ("NÃO_REGÊNCIA", None, 0),
+        'inst': ("INSTRUTORES", None, 0),
+        'disc': ("DISCIPLINAS", None, 1),
+        'amb': ("AMBIENTES", None, 0),
+        'faltas': ("FALTAS", None, 0),
+        'param': ("PARÂMETROS", None, 9)
     }
+    
+    dados_carregados = {}
+    for chave, (nome_aba, colunas, pular_linhas) in config_abas.items():
+        try:
+            dados_carregados[chave] = pd.read_excel(
+                xls, 
+                sheet_name=nome_aba, 
+                usecols=colunas, 
+                skiprows=pular_linhas
+            )
+        except Exception as e:
+            st.error(f"Erro ao carregar aba '{nome_aba}': {e}")
+            dados_carregados[chave] = pd.DataFrame()
+            
+    return dados_carregados
 
 @st.cache_data
 def compilar_historico(arquivos):
+    """Compila dados de múltiplos meses para análise de tendências, otimizando a leitura."""
     dados_linha_tempo = []
     for arq in arquivos:
         mes = arq.replace(".xlsx", "")
         caminho = os.path.join(PASTA_HISTORICO, arq)
         try:
-            df_nr = pd.read_excel(caminho, sheet_name="NÃO_REGÊNCIA")
-            df_oc = pd.read_excel(caminho, sheet_name="OCUPAÇÃO")
-            total_nr = df_nr['HORAS_NAO_REGENCIA'].sum() if not df_nr.empty else 0
-            ocupacao_media = df_oc['PERCENTUAL_OCUPACAO'].mean() * 100 if not df_oc.empty else 0
-            dados_linha_tempo.append({"Mês": mes, "Horas Não Regência": total_nr, "Ocupação Média (%)": ocupacao_media})
-        except Exception:
-            pass 
-    return pd.DataFrame(dados_linha_tempo)
+            # Lê apenas as colunas necessárias para o histórico
+            df_nr = pd.read_excel(caminho, sheet_name="NÃO_REGÊNCIA", usecols=["HORAS_NAO_REGENCIA"])
+            df_oc = pd.read_excel(caminho, sheet_name="OCUPAÇÃO", usecols=["PERCENTUAL_OCUPACAO"])
+            
+            total_nr = df_nr['HORAS_NAO_REGENCIA'].sum()
+            ocupacao_media = df_oc['PERCENTUAL_OCUPACAO'].mean() * 100
+            
+            dados_linha_tempo.append({
+                "Mês": mes, 
+                "Horas Não Regência": total_nr, 
+                "Ocupação Média (%)": ocupacao_media
+            })
+        except Exception as e:
+            # Silencioso para não quebrar a UI, mas poderia ser logado
+            continue 
+            
+    df_hist = pd.DataFrame(dados_linha_tempo)
+    if not df_hist.empty:
+        df_hist = df_hist.sort_values("Mês") # Garante ordem cronológica se os nomes permitirem
+    return df_hist
 
 caminho_selecionado = os.path.join(PASTA_HISTORICO, f"{mes_analise}.xlsx")
 dados = load_data(caminho_selecionado)
@@ -390,207 +446,13 @@ else:
         df_turmas_f = dados['turmas'].copy()
         df_ocupacao_f = dados['ocupacao'].copy()
 
-    if pagina_selecionada == "🌐 Visão 360º":
-        st.title(f"🌐 Visão Institucional - {mes_analise[5:] if mes_analise else ''}") 
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Turmas Abertas", len(df_turmas_f))
-        col2.metric("Alunos", df_turmas_f['VAGAS_OCUPADAS'].sum() if not df_turmas_f.empty else 0)
-        col3.metric("Salas Físicas", len(dados['amb'][dados['amb']['VIRTUAL'] == 'NÃO']))
-        col4.metric("Instrutores", len(dados['inst']))
-        col5.metric("Faltas Registadas", len(dados['faltas']))
-        
-        st.divider()
-        st.markdown("### 🎯 Execução de Hora-Aluno (HA) - Visão Macro")
-        
-        df_disc = dados['disc'].copy()
-        df_disc['STATUS_NORM'] = df_disc['STATUS'].astype(str).str.strip().str.upper()
-        
-        df_turmas_resumo = df_turmas_f[['ID_TURMA', 'VAGAS_OCUPADAS']].copy()
-        if col_nome != 'ID_TURMA':
-            df_turmas_resumo[col_nome] = df_turmas_f[col_nome]
-            df_turmas_resumo['TURMA_EXIBICAO'] = df_turmas_resumo['ID_TURMA'].astype(str) + " - " + df_turmas_resumo[col_nome].astype(str)
-        else:
-            df_turmas_resumo['TURMA_EXIBICAO'] = "Turma " + df_turmas_resumo['ID_TURMA'].astype(str)
-            
-        df_ha = pd.merge(df_disc, df_turmas_resumo, on='ID_TURMA', how='inner')
-        df_ha['HA_TOTAL'] = df_ha['CARGA_HORARIA'] * df_ha['VAGAS_OCUPADAS']
-        
-        ha_meta_planilha = df_ha['HA_TOTAL'].sum()
-        metas_config = carregar_metas()
-        meta_manual = metas_config.get(mes_analise, 0)
-        
-        if meta_manual > 0:
-            ha_meta = meta_manual
-            tipo_meta = "Manual (Admin)"
-        else:
-            ha_meta = ha_meta_planilha
-            tipo_meta = "Automática (Planilha)"
-            
-        ha_cumprida = df_ha[df_ha['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['HA_TOTAL'].sum()
-        perc_ha = (ha_cumprida / ha_meta) * 100 if ha_meta > 0 else 0
-        
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric(f"📚 Meta HA - {tipo_meta}", f"{ha_meta:,.0f} HA".replace(',', '.'))
-        col_m2.metric("✅ Realizado (Hora-Aluno)", f"{ha_cumprida:,.0f} HA".replace(',', '.'))
-        col_m3.metric("🚀 Progresso da Meta", f"{perc_ha:.1f}%")
-        st.progress(min(int(perc_ha), 100))
-        
-        st.divider()
-        st.markdown("### 🏁 Progresso de Conclusão por Turma")
-        st.caption("Acompanhamento individual de cada turma com base nas disciplinas concluídas.")
-        
-        df_ha_turma = df_ha.groupby('TURMA_EXIBICAO').apply(
-            lambda x: pd.Series({
-                'HA_META': x['HA_TOTAL'].sum(),
-                'HA_REALIZADO': x[x['STATUS_NORM'].isin(['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'])]['HA_TOTAL'].sum()
-            })
-        ).reset_index()
-        
-        df_ha_turma['PROGRESSO_%'] = (df_ha_turma['HA_REALIZADO'] / df_ha_turma['HA_META']) * 100
-        df_ha_turma['PROGRESSO_%'] = df_ha_turma['PROGRESSO_%'].fillna(0).round(1)
-        
-        if not df_ha_turma.empty:
-            fig_turmas = px.bar(
-                df_ha_turma.sort_values('PROGRESSO_%', ascending=True), 
-                x='PROGRESSO_%', 
-                y='TURMA_EXIBICAO', 
-                orientation='h',
-                title='Ranking de Progresso por Turma (%)',
-                text='PROGRESSO_%',
-                color='PROGRESSO_%',
-                color_continuous_scale='Greens'
-            )
-            fig_turmas.update_layout(xaxis=dict(range=[0, 100]), yaxis_title="Turma / Curso", xaxis_title="Conclusão (%)")
-            st.plotly_chart(fig_turmas, use_container_width=True)
-            
-            with st.expander("🔍 Ver detalhamento de disciplinas por turma"):
-                turma_selecionada = st.selectbox("Selecione uma turma para analisar:", df_ha_turma['TURMA_EXIBICAO'].unique())
-                df_detalhe_turma = df_ha[df_ha['TURMA_EXIBICAO'] == turma_selecionada][['NOME_DISCIPLINA', 'CARGA_HORARIA', 'STATUS', 'HA_TOTAL']]
-                
-                def pintar_status(val):
-                    cor = '#d4edda' if str(val).strip().upper() in ['CONCLUÍDO', 'CONCLUIDO', 'FINALIZADO'] else '#f8d7da'
-                    return f'background-color: {cor}; color: black'
-                
-                try:
-                    st.dataframe(df_detalhe_turma.style.map(pintar_status, subset=['STATUS']), use_container_width=True, hide_index=True)
-                except AttributeError:
-                    st.dataframe(df_detalhe_turma.style.applymap(pintar_status, subset=['STATUS']), use_container_width=True, hide_index=True)
-        else:
-            st.info("Não há dados suficientes para cruzar turmas e disciplinas neste mês.")
-
-        st.divider()
-        st.markdown("#### Status de Execução das Disciplinas (Geral)")
-        status_disc = df_disc['STATUS'].value_counts().reset_index()
-        status_disc.columns = ['Status', 'Quantidade']
-        st.plotly_chart(px.pie(status_disc, names='Status', values='Quantidade', hole=0.4, color_discrete_sequence=px.colors.sequential.Teal), use_container_width=True)
+        from pages import render_visao_360
+        render_visao_360(dados, mes_analise, col_nome, df_turmas_f, df_ocupacao_f, carregar_metas)
 
     elif pagina_selecionada == "👥 Análise de Docentes (RH)":
-        st.title(f"👥 Docentes e Não Regência - {mes_analise[5:]}")
-        df_nr_det = pd.merge(dados['nr'], dados['inst'][['ID', 'NOME_COMPLETO']], left_on='ID_INSTRUTOR', right_on='ID', how='left')
-        if not df_nr_det.empty:
-            df_horas_inst = df_nr_det.groupby('NOME_COMPLETO')['HORAS_NAO_REGENCIA'].sum().reset_index().sort_values('HORAS_NAO_REGENCIA')
-            st.plotly_chart(px.bar(df_horas_inst, x='HORAS_NAO_REGENCIA', y='NOME_COMPLETO', orientation='h', title="Ranking de Horas Não Regência", color='HORAS_NAO_REGENCIA', color_continuous_scale='Oranges'), use_container_width=True)
-            
-            # --- Suporte às colunas de Data ---
-            if 'DATA_INICIO' in df_nr_det.columns:
-                df_nr_det['DATA_INICIO'] = pd.to_datetime(df_nr_det['DATA_INICIO'], errors='coerce').dt.strftime('%d/%m/%Y')
-            if 'DATA_FIM' in df_nr_det.columns:
-                df_nr_det['DATA_FIM'] = pd.to_datetime(df_nr_det['DATA_FIM'], errors='coerce').dt.strftime('%d/%m/%Y')
-                
-            colunas_exibir = ['NOME_COMPLETO', 'TIPO_ATIVIDADE', 'HORAS_NAO_REGENCIA']
-            if 'DATA_INICIO' in df_nr_det.columns and 'DATA_FIM' in df_nr_det.columns:
-                colunas_exibir = ['DATA_INICIO', 'DATA_FIM'] + colunas_exibir
-            elif 'DATA' in df_nr_det.columns:
-                colunas_exibir = ['DATA'] + colunas_exibir
-                
-            st.dataframe(df_nr_det[colunas_exibir], use_container_width=True, hide_index=True)
-        else:
-            st.info("Sem dados de Não Regência para este mês.")
+        from pages import render_analise_docentes
+        render_analise_docentes(dados, mes_analise)
 
     elif pagina_selecionada == "🏢 Ocupação e Ambientes":
-        st.title(f"🏢 Uso de Laboratórios e Salas - {mes_analise[5:] if mes_analise else ''}")
-        
-        if not df_ocupacao_f.empty:
-            if 'DATA' in df_ocupacao_f.columns:
-                df_ocupacao_f['DATA'] = pd.to_datetime(df_ocupacao_f['DATA'], errors='coerce')
-            
-            tipo_grafico = st.selectbox(
-                "📊 Selecione a visão de análise de ocupação:",
-                [
-                    "Visão Geral (Média por Ambiente)", 
-                    "Evolução Diária (Linha do Tempo)", 
-                    "Mapa de Calor (Ambiente vs. Dia)"
-                ]
-            )
-            
-            st.divider()
-            
-            if tipo_grafico == "Visão Geral (Média por Ambiente)":
-                st.subheader("Ocupação Média Acumulada")
-                df_amb_uso = df_ocupacao_f.groupby('AMBIENTE')['PERCENTUAL_OCUPACAO'].mean().reset_index()
-                df_amb_uso['PERCENTUAL_OCUPACAO'] *= 100
-                
-                fig = px.bar(
-                    df_amb_uso.sort_values('PERCENTUAL_OCUPACAO'), 
-                    x='PERCENTUAL_OCUPACAO', 
-                    y='AMBIENTE', 
-                    orientation='h', 
-                    color='PERCENTUAL_OCUPACAO', 
-                    color_continuous_scale='Blues',
-                    text_auto='.1f'
-                )
-                fig.update_layout(xaxis_title="Ocupação Média (%)", yaxis_title="")
-                st.plotly_chart(fig, use_container_width=True)
-                
-            elif tipo_grafico == "Evolução Diária (Linha do Tempo)":
-                st.subheader("Evolução da Ocupação ao Longo do Mês")
-                if 'DATA' in df_ocupacao_f.columns:
-                    df_diario = df_ocupacao_f.groupby('DATA')['PERCENTUAL_OCUPACAO'].mean().reset_index()
-                    df_diario['PERCENTUAL_OCUPACAO'] *= 100
-                    df_diario = df_diario.dropna(subset=['DATA']).sort_values('DATA')
-                    
-                    fig = px.line(
-                        df_diario, 
-                        x='DATA', 
-                        y='PERCENTUAL_OCUPACAO', 
-                        markers=True,
-                        line_shape="spline"
-                    )
-                    fig.update_traces(line_color='#1f77b4', line_width=3, marker=dict(size=8))
-                    fig.update_yaxes(range=[0, 100], title="Ocupação Média (%)")
-                    fig.update_xaxes(title="Data")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("⚠️ A coluna 'DATA' não foi encontrada na planilha de Ocupação.")
-                    
-            elif tipo_grafico == "Mapa de Calor (Ambiente vs. Dia)":
-                st.subheader("🔥 Mapa de Calor Diário por Ambiente")
-                st.caption("Cores mais escuras indicam maior nível de lotação.")
-                
-                if 'DATA' in df_ocupacao_f.columns:
-                    df_heat = df_ocupacao_f.copy()
-                    df_heat['DIA_FORMATADO'] = df_heat['DATA'].dt.strftime('%d/%m')
-                    
-                    pivot_heat = df_heat.pivot_table(
-                        index='AMBIENTE', 
-                        columns='DIA_FORMATADO', 
-                        values='PERCENTUAL_OCUPACAO', 
-                        aggfunc='mean'
-                    )
-                    
-                    pivot_heat = pivot_heat * 100
-                    
-                    fig = px.imshow(
-                        pivot_heat, 
-                        text_auto=".0f", 
-                        aspect="auto",
-                        color_continuous_scale='YlOrRd', 
-                        labels=dict(x="Dia", y="Ambiente", color="Ocupação (%)")
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("⚠️ A coluna 'DATA' não foi encontrada na planilha de Ocupação.")
-                    
-        else:
-            st.info("Sem dados de Ocupação para este mês.")
+        from pages import render_ocupacao_ambientes
+        render_ocupacao_ambientes(dados, mes_analise, df_ocupacao_f)
