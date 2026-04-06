@@ -110,7 +110,8 @@ def salvar_metas_github(metas_dict):
             
             try:
                 contents = repo.get_contents(caminho_no_repo)
-                repo.update_file(contents.path, mensagem_commit, conteudo, contents.s            except Exception as e_update:
+                repo.update_file(contents.path, mensagem_commit, conteudo, contents.sha)
+            except Exception as e_update:
                 # Se o arquivo não existe, cria. Se der outro erro, registra.
                 try:
                     repo.create_file(caminho_no_repo, mensagem_commit, conteudo)
@@ -123,7 +124,9 @@ def salvar_metas_github(metas_dict):
         return False
     except Exception as e:
         st.error(f"Erro geral ao salvar metas no GitHub: {e}")
-        return False========================================
+        return False
+
+# ==========================================
 # 3. BARRA LATERAL: LOGIN COM FORMULÁRIO
 # ==========================================
 st.sidebar.title("🔐 Acesso Administrativo")
@@ -446,6 +449,7 @@ else:
         df_turmas_f = dados['turmas'].copy()
         df_ocupacao_f = dados['ocupacao'].copy()
 
+    if pagina_selecionada == "🌐 Visão 360º":
         from pages import render_visao_360
         render_visao_360(dados, mes_analise, col_nome, df_turmas_f, df_ocupacao_f, carregar_metas)
 
